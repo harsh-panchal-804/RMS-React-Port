@@ -994,7 +994,7 @@ const UserProductivityDashboard = () => {
     <div className="min-h-screen w-full bg-background p-6">
       <div className="w-full space-y-6">
         <div className="space-y-2">
-          <h1 className="text-4xl font-bold tracking-tight">👤 User Productivity & Quality Dashboard</h1>
+          <h1 className="text-4xl font-bold tracking-tight">User Productivity & Quality Dashboard</h1>
           <p className="text-muted-foreground text-lg">Comprehensive analytics for individual user performance tracking</p>
         </div>
 

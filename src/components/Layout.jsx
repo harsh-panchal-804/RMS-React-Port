@@ -6,14 +6,19 @@ import {
   IconBrandTabler,
   IconHome,
   IconAlertTriangle,
+  IconUsersGroup,
 } from "@tabler/icons-react";
-import { Settings } from "lucide-react";
+import { Settings, LogOut, Loader2 } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
 import ProjectProductivityDashboard from "./Dashboard";
 import UserProductivityDashboard from "./UserDashboard";
+import ProjectResourceAllocation from "./ProjectResourceAllocation";
 import Home from "./Home";
 import NotFound from "./NotFound";
+import { Login } from "./Login";
+import { useAuth } from "@/contexts/AuthContext";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import deccanLogo from "@/assets/o9v0brYfHVytUv8NJzPm2Tuymi0.webp";
 import {
   DropdownMenu,
@@ -29,10 +34,41 @@ import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 export function Layout() {
   const [hoverOpen, setHoverOpen] = useState(false);
   const location = useLocation();
+  const { isAuthenticated, loading, user, token, logout } = useAuth();
+  
+  // Debug logging
+  React.useEffect(() => {
+    console.log('🔍 Layout Auth State:', {
+      isAuthenticated,
+      loading,
+      hasUser: !!user,
+      hasToken: !!token,
+      userEmail: user?.email,
+      userRole: user?.role,
+    });
+  }, [isAuthenticated, loading, user, token]);
   
   // Check if current route should hide sidebar (404 page)
-  const validRoutes = ["/", "/dashboard", "/user-dashboard", "/404"];
+  const validRoutes = ["/", "/dashboard", "/user-dashboard", "/project-resource-allocation", "/404"];
   const is404Page = !validRoutes.includes(location.pathname) || location.pathname === "/404";
+
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center flex-col gap-4">
+        <Loader2 className="h-8 w-8 animate-spin" />
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
+
+  // Show login if not authenticated
+  if (!isAuthenticated) {
+    console.log('⚠️ Not authenticated, showing login');
+    return <Login />;
+  }
+
+  console.log('✅ Authenticated, showing layout');
 
   const links = [
     {
@@ -54,6 +90,13 @@ export function Layout() {
       path: "/user-dashboard",
       icon: (
         <IconBrandTabler className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+      ),
+    },
+    {
+      label: "Project Resource Allocation",
+      path: "/project-resource-allocation",
+      icon: (
+        <IconUsersGroup className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
@@ -127,32 +170,56 @@ export function Layout() {
         </Sidebar>
         <SidebarInset className="flex-1 w-full flex flex-col">
           <div className="flex items-center justify-end p-4 border-b">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="icon">
-                  <Settings className="h-4 w-4" />
-                  <span className="sr-only">Open settings</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Settings</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <div className="px-2 py-1.5">
-                  <div className="flex items-center justify-between w-full">
-                    <span className="text-sm">Theme</span>
-                    <AnimatedThemeToggler 
-                      className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center" 
-                    />
+            <div className="flex items-center gap-2">
+              {user && (
+                <Avatar className="h-8 w-8 ring-2 ring-ring ring-offset-2 ring-offset-background">
+                  <AvatarImage src={user.avatar} alt={user.name} />
+                  <AvatarFallback>
+                    {user.name?.charAt(0)?.toUpperCase() || user.email?.charAt(0)?.toUpperCase() || 'U'}
+                  </AvatarFallback>
+                </Avatar>
+              )}
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline" size="icon">
+                    <Settings className="h-4 w-4" />
+                    <span className="sr-only">Open settings</span>
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-56">
+                  <DropdownMenuLabel>Settings</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <div className="px-2 py-1.5">
+                    <div className="flex items-center justify-between w-full">
+                      <span className="text-sm">Theme</span>
+                      <AnimatedThemeToggler 
+                        className="h-8 w-8 rounded-md hover:bg-accent flex items-center justify-center" 
+                      />
+                    </div>
                   </div>
-                </div>
-              </DropdownMenuContent>
-            </DropdownMenu>
+                  <DropdownMenuSeparator />
+                  {user && (
+                    <>
+                      <DropdownMenuItem disabled>
+                        <span>Role: {user.role}</span>
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                    </>
+                  )}
+                  <DropdownMenuItem onClick={logout}>
+                    <LogOut className="mr-2 h-4 w-4" />
+                    <span>Log out</span>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
           </div>
           <div className="flex-1 overflow-auto">
             <Routes>
               <Route path="/" element={<Home />} />
               <Route path="/dashboard" element={<ProjectProductivityDashboard />} />
               <Route path="/user-dashboard" element={<UserProductivityDashboard />} />
+              <Route path="/project-resource-allocation" element={<ProjectResourceAllocation />} />
               <Route path="/404" element={<NotFound />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

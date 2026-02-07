@@ -605,3 +605,79 @@ export const getUserRole = () => {
   // For now, returning from localStorage or sessionStorage
   return localStorage.getItem('userRole') || sessionStorage.getItem('userRole');
 };
+
+/**
+ * Fetch all projects
+ */
+export const getAllProjects = async () => {
+  try {
+    const projects = await authenticatedRequest('GET', '/admin/projects');
+    return Array.isArray(projects) ? projects : [];
+  } catch (error) {
+    console.error('Error fetching projects:', error);
+    return [];
+  }
+};
+
+/**
+ * Fetch users with filter (for specific date)
+ */
+export const getUsersWithFilter = async (date) => {
+  try {
+    const response = await authenticatedRequest('POST', '/admin/users/users_with_filter', { date });
+    return response?.items || [];
+  } catch (error) {
+    console.error('Error fetching users with filter:', error);
+    return [];
+  }
+};
+
+/**
+ * Fetch project metrics for a date range
+ */
+export const getProjectMetrics = async (projectId, startDate, endDate) => {
+  try {
+    const metrics = await authenticatedRequest('GET', '/admin/metrics/user_daily/', {
+      project_id: projectId,
+      start_date: startDate,
+      end_date: endDate,
+    });
+    return Array.isArray(metrics) ? metrics : [];
+  } catch (error) {
+    console.error('Error fetching project metrics:', error);
+    return [];
+  }
+};
+
+/**
+ * Fetch project role counts for a specific date
+ */
+export const getProjectRoleCounts = async (projectId, targetDate) => {
+  try {
+    const counts = await authenticatedRequest('GET', '/admin/project-resource-allocation/role-counts', {
+      project_id: projectId,
+      target_date: targetDate,
+    });
+    return counts;
+  } catch (error) {
+    console.error('Error fetching project role counts:', error);
+    return null;
+  }
+};
+
+/**
+ * Fetch project allocation data for a specific date
+ */
+export const getProjectAllocation = async (projectId, targetDate, onlyActive = true) => {
+  try {
+    const allocation = await authenticatedRequest('GET', '/admin/project-resource-allocation/', {
+      project_id: projectId,
+      target_date: targetDate,
+      only_active: onlyActive,
+    });
+    return allocation;
+  } catch (error) {
+    console.error('Error fetching project allocation:', error);
+    return null;
+  }
+};

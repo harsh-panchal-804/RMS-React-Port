@@ -27,73 +27,49 @@ A React-based dashboard application built with Vite for viewing productivity met
    Create a `.env` file in the project root directory with the following content:
    ```env
    VITE_API_BASE_URL=your_api_base_url_here
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-key-here
    ```
    
-   Replace `your_api_base_url_here` with your actual API base URL (e.g., `https://api.example.com` or `http://localhost:8000`).
+   Replace the placeholders with your actual values:
+   - `VITE_API_BASE_URL`: Your backend API base URL (e.g., `https://api.example.com` or `http://localhost:8000`)
+   - `VITE_SUPABASE_URL`: Your Supabase project URL
+   - `VITE_SUPABASE_ANON_KEY`: Your Supabase anonymous/public key
 
-## Setting the Authentication Token
+## Authentication
 
-The application requires an authentication token to be stored in the browser's localStorage. You can set the token using one of the following methods:
+The application uses **Google OAuth** via Supabase for authentication. Users must sign in with their Google account to access the dashboard.
 
-### Method 1: Using the Application UI
+### Google OAuth Setup
 
-1. Start the development server (see "Running the Application" below)
-2. Open the application in your browser
-3. Look for the token input field in the dashboard interface
-4. Enter your authentication token
-5. Click the "Set Token" button
+1. **Configure Supabase OAuth**:
+   - Go to your Supabase project dashboard
+   - Navigate to **Authentication** → **Providers**
+   - Enable **Google** provider
+   - Add your Google OAuth credentials (Client ID and Client Secret)
+   - Add your redirect URL (e.g., `http://localhost:5173` for development)
 
-The token will be automatically stored in localStorage and the application will start fetching data.
+2. **Sign In Flow**:
+   - When you open the application, you'll see a login page
+   - Click "Sign in with Google"
+   - You'll be redirected to Google to authenticate
+   - After successful authentication, you'll be redirected back to the application
+   - The application will automatically:
+     - Exchange the OAuth code for a Supabase session token
+     - Validate the token with your backend API
+     - Retrieve your user role from the backend
+     - Store the authentication state
 
-### Method 2: Using Browser Console (Manual)
+3. **User Registration**:
+   - Users must be registered in your backend database
+   - If a user authenticates with Google but their email is not in the database, they will see an "Access denied" message
+   - Contact your administrator to add your email to the system
 
-1. Open the application in your browser
-2. Open the browser's Developer Console:
-   - **Chrome/Edge**: Press `F12` or `Ctrl+Shift+I` (Windows/Linux) / `Cmd+Option+I` (Mac)
-   - **Firefox**: Press `F12` or `Ctrl+Shift+K` (Windows/Linux) / `Cmd+Option+K` (Mac)
-   - **Safari**: Press `Cmd+Option+C` (Mac)
+### Logging Out
 
-3. In the console, run the following command:
-   ```javascript
-   localStorage.setItem('token', 'your_token_here');
-   localStorage.setItem('userRole', 'ADMIN');
-   ```
-   
-   Replace `your_token_here` with your actual authentication token.
-
-4. Refresh the page to apply the changes.
-
-### Method 3: Using Browser DevTools Application Tab
-
-1. Open the application in your browser
-2. Open Developer Tools (`F12`)
-3. Navigate to the **Application** tab (Chrome/Edge) or **Storage** tab (Firefox)
-4. In the left sidebar, expand **Local Storage**
-5. Click on your application's URL
-6. Add or edit the following entries:
-   - Key: `token`, Value: `your_token_here`
-   - Key: `userRole`, Value: `ADMIN`
-6. Refresh the page
-
-### Token Format Notes
-
-- The token should be a valid JWT (JSON Web Token) or Supabase access token
-- If your token includes a "Bearer " prefix, the application will automatically remove it
-- The token typically starts with "eyJ..." for JWT tokens
-- Make sure the token is not expired
-
-### Clearing the Token
-
-To clear the stored token:
-
-**Using Browser Console:**
-```javascript
-localStorage.removeItem('token');
-localStorage.removeItem('userRole');
-```
-
-**Using the Application UI:**
-- Click the "Clear Token" button in the dashboard interface
+- Click the **Settings** icon in the top-right corner
+- Select **Log out** from the dropdown menu
+- This will clear your session and redirect you to the login page
 
 ## Running the Application
 
@@ -140,6 +116,12 @@ yarn preview
 react_port/
 ├── src/
 │   ├── components/      # React components
+│   │   ├── Login.jsx    # Google OAuth login component
+│   │   └── ...
+│   ├── contexts/        # React contexts
+│   │   └── AuthContext.jsx  # Authentication context
+│   ├── lib/             # Library configurations
+│   │   └── supabase.js  # Supabase client configuration
 │   ├── utils/           # Utility functions (API, etc.)
 │   ├── assets/          # Static assets
 │   └── App.jsx          # Main application component
@@ -151,12 +133,19 @@ react_port/
 
 ## Troubleshooting
 
-### Token Not Working
+### Authentication Issues
 
-- Ensure the token is valid and not expired
-- Check the browser console for error messages
-- Verify that `VITE_API_BASE_URL` is correctly set in your `.env` file
-- Make sure the token has the correct permissions for the API endpoints
+- **"Access denied. Your email is not registered"**:
+  - Your Google account email is not in the backend database
+  - Contact your administrator to add your email to the system
+
+- **"Could not generate login URL"**:
+  - Check that `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are correctly set in your `.env` file
+  - Verify your Supabase project is active and Google OAuth is enabled
+
+- **OAuth redirect not working**:
+  - Ensure the redirect URL in Supabase matches your application URL (e.g., `http://localhost:5173`)
+  - Check that the redirect URL is added to your Supabase project's allowed redirect URLs
 
 ### API Connection Issues
 
@@ -175,6 +164,7 @@ react_port/
 
 - React 19
 - Vite 7
+- Supabase (Authentication & OAuth)
 - Axios (HTTP client)
 - Tailwind CSS
 - Radix UI components
