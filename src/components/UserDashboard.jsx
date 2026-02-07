@@ -3,10 +3,8 @@ import { format, startOfMonth } from 'date-fns';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis, Bar, BarChart, Area, AreaChart, Scatter, ScatterChart, ZAxis, Cell, Legend, ResponsiveContainer, ComposedChart, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts';
 import {
   fetchUserProductivityData,
-  getUserNameMapping,
-  getUserEmailMapping,
-  getUserSoulIdMapping,
-  getProjectNameMapping,
+  getAllUserMappings,
+  getAllProjectMappings,
   getToken,
 } from '../utils/api';
 import { Button } from '@/components/ui/button';
@@ -86,51 +84,66 @@ const UserProductivityDashboard = () => {
     }
   }, []);
 
-  // Load user mappings
+  // Fetch data when token is set (also loads mappings)
   useEffect(() => {
     if (!tokenSet) return;
 
-    const loadMappings = async () => {
-      try {
-        const [names, emails, soulIds, projects] = await Promise.all([
-          getUserNameMapping(),
-          getUserEmailMapping(),
-          getUserSoulIdMapping(),
-          getProjectNameMapping(),
-        ]);
-        setUserMap(names);
-        setUserEmailMap(emails);
-        setSoulIdMap(soulIds);
-        setProjectMap(projects);
-      } catch (err) {
-        console.error('Error loading mappings:', err);
-      }
-    };
-
-    loadMappings();
-  }, [tokenSet]);
-
-  // Fetch data when token is set
-  useEffect(() => {
-    if (!tokenSet) return;
+    let isMounted = true;
 
     const loadData = async () => {
       try {
         setLoading(true);
         setError(null);
         console.log('🔄 Starting to fetch user productivity data...');
-        const fetchedData = await fetchUserProductivityData();
+        
+        // Get mappings first (will use cache if available, with request deduplication)
+        const [userMappings, projectMappings] = await Promise.all([
+          getAllUserMappings(),
+          getAllProjectMappings(),
+        ]);
+        
+        // Check if component is still mounted before updating state
+        if (!isMounted) return;
+        
+        // Update local state with mappings
+        setUserMap(userMappings.nameMap);
+        setUserEmailMap(userMappings.emailMap);
+        setSoulIdMap(userMappings.soulIdMap);
+        setProjectMap(projectMappings.nameMap);
+        
+        // Pass mappings to avoid refetching
+        const fetchedData = await fetchUserProductivityData(
+          null, null, null, null, true,
+          {
+            nameMap: userMappings.nameMap,
+            emailMap: userMappings.emailMap,
+            soulIdMap: userMappings.soulIdMap,
+            projectMap: projectMappings.nameMap,
+          }
+        );
+        
+        // Check again if component is still mounted
+        if (!isMounted) return;
+        
         console.log('✅ Data fetched successfully:', fetchedData.length, 'records');
         setData(fetchedData);
       } catch (err) {
+        if (!isMounted) return;
         console.error('❌ Error loading data:', err);
         setError(err.message || 'Failed to load data');
       } finally {
-        setLoading(false);
+        if (isMounted) {
+          setLoading(false);
+        }
       }
     };
 
     loadData();
+
+    // Cleanup function to prevent state updates if component unmounts
+    return () => {
+      isMounted = false;
+    };
   }, [tokenSet]);
 
   const handleSetToken = () => {
@@ -152,7 +165,30 @@ const UserProductivityDashboard = () => {
       setLoading(true);
       setError(null);
       console.log('🔄 Manually refreshing data...');
-      const fetchedData = await fetchUserProductivityData();
+      
+      // Get mappings first (force refresh by bypassing cache)
+      const [userMappings, projectMappings] = await Promise.all([
+        getAllUserMappings(false), // Force refresh by bypassing cache
+        getAllProjectMappings(false),
+      ]);
+      
+      // Update local state
+      setUserMap(userMappings.nameMap);
+      setUserEmailMap(userMappings.emailMap);
+      setSoulIdMap(userMappings.soulIdMap);
+      setProjectMap(projectMappings.nameMap);
+      
+      // Fetch data with mappings
+      const fetchedData = await fetchUserProductivityData(
+        null, null, null, null, true,
+        {
+          nameMap: userMappings.nameMap,
+          emailMap: userMappings.emailMap,
+          soulIdMap: userMappings.soulIdMap,
+          projectMap: projectMappings.nameMap,
+        }
+      );
+      
       console.log('✅ Data refreshed:', fetchedData.length, 'records');
       setData(fetchedData);
     } catch (err) {
@@ -1438,26 +1474,26 @@ const UserProductivityDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-[400px] w-full">
+                  <div className="h-[400px] w-full overflow-auto">
                     <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>User</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>Project</TableHead>
-                          <TableHead>Role</TableHead>
-                          <TableHead>Hours</TableHead>
-                          <TableHead>Tasks</TableHead>
-                          <TableHead>Quality Rating</TableHead>
-                          <TableHead>Quality Score</TableHead>
-                          <TableHead>Accuracy</TableHead>
-                          <TableHead>Critical Rate</TableHead>
-                          <TableHead>Productivity</TableHead>
-                          <TableHead>Attendance</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="whitespace-nowrap">Date</TableHead>
+                            <TableHead className="whitespace-nowrap">User</TableHead>
+                            <TableHead className="whitespace-nowrap">Email</TableHead>
+                            <TableHead className="whitespace-nowrap">Project</TableHead>
+                            <TableHead className="whitespace-nowrap">Role</TableHead>
+                            <TableHead className="whitespace-nowrap">Hours</TableHead>
+                            <TableHead className="whitespace-nowrap">Tasks</TableHead>
+                            <TableHead className="whitespace-nowrap">Quality Rating</TableHead>
+                            <TableHead className="whitespace-nowrap">Quality Score</TableHead>
+                            <TableHead className="whitespace-nowrap">Accuracy</TableHead>
+                            <TableHead className="whitespace-nowrap">Critical Rate</TableHead>
+                            <TableHead className="whitespace-nowrap">Productivity</TableHead>
+                            <TableHead className="whitespace-nowrap">Attendance</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                         {processedData
                           .sort((a, b) => b.date - a.date)
                           .slice(0, 100)
@@ -1485,14 +1521,13 @@ const UserProductivityDashboard = () => {
                               <TableCell>{row.tasks_completed}</TableCell>
                               <TableCell>
                                 <Badge
-                                  variant={
+                                  variant="outline"
+                                  className={
                                     row.quality_rating === 'Good'
-                                      ? 'default'
-                                      : row.quality_rating === 'Average'
-                                      ? 'secondary'
+                                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
                                       : row.quality_rating === 'Bad'
-                                      ? 'destructive'
-                                      : 'outline'
+                                      ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                      : ''
                                   }
                                 >
                                   {row.quality_rating}
@@ -1515,14 +1550,13 @@ const UserProductivityDashboard = () => {
                               </TableCell>
                               <TableCell>
                                 <Badge
-                                  variant={
+                                  variant="outline"
+                                  className={
                                     row.attendance_status === 'Present'
-                                      ? 'default'
-                                      : row.attendance_status === 'WFH'
-                                      ? 'secondary'
-                                      : row.attendance_status === 'Leave'
-                                      ? 'outline'
-                                      : 'destructive'
+                                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                                      : row.attendance_status === 'Absent'
+                                      ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                      : ''
                                   }
                                 >
                                   {row.attendance_status}
@@ -1530,9 +1564,9 @@ const UserProductivityDashboard = () => {
                               </TableCell>
                             </TableRow>
                           ))}
-                      </TableBody>
-                    </Table>
-                  </ScrollArea>
+                        </TableBody>
+                      </Table>
+                  </div>
                   <Alert className="mt-4">
                     <Info className="h-4 w-4" />
                     <AlertDescription className="text-xs">

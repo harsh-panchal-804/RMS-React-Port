@@ -6,7 +6,7 @@ import { cn } from "@/lib/utils"
 
 export const AnimatedThemeToggler = ({
   className,
-  duration = 400,
+  duration = 750,
   ...props
 }) => {
   const [isDark, setIsDark] = useState(false)

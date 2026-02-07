@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
+import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import {
   getAllProjects,
@@ -15,12 +16,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { HoverEffect } from '@/components/ui/card-hover-effect';
 import {
   RefreshCw,
   Download,
@@ -29,6 +32,17 @@ import {
   Clock,
   Target,
   AlertCircle,
+  BarChart3,
+  TrendingUp,
+  Search,
+  FolderOpen,
+  ClipboardList,
+  Info,
+  CheckCircle2,
+  AlertTriangle,
+  UserCheck,
+  UserX,
+  Briefcase,
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
@@ -48,6 +62,8 @@ const ProjectResourceAllocation = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [hoveredOverallIndex, setHoveredOverallIndex] = useState(null);
   
   // Data states
   const [allProjects, setAllProjects] = useState([]);
@@ -60,6 +76,7 @@ const ProjectResourceAllocation = () => {
   const [showUserListDialog, setShowUserListDialog] = useState(false);
   const [userListData, setUserListData] = useState([]);
   const [userListTitle, setUserListTitle] = useState('');
+  const [userListType, setUserListType] = useState('');
   const [showProjectDialog, setShowProjectDialog] = useState(false);
   const [projectDialogData, setProjectDialogData] = useState(null);
   const [projectDialogType, setProjectDialogType] = useState('');
@@ -293,9 +310,62 @@ const ProjectResourceAllocation = () => {
     });
   };
 
+  // Get user projects mapping
+  const getUserProjectsMapping = useMemo(() => {
+    const mapping = {};
+    const dateStr = format(selectedDate, 'yyyy-MM-dd');
+    
+    Object.entries(projectAllocations).forEach(([projectId, allocation]) => {
+      const project = allProjects.find(p => p.id === projectId);
+      const projectName = project?.name || 'Unknown Project';
+      
+      if (allocation?.resources) {
+        allocation.resources.forEach(resource => {
+          const userId = String(resource.user_id).trim();
+          if (userId && userId !== 'None') {
+            if (!mapping[userId]) {
+              mapping[userId] = [];
+            }
+            if (!mapping[userId].includes(projectName)) {
+              mapping[userId].push(projectName);
+            }
+            // Also store with lowercase and no-dash variants for better matching
+            const userIdLower = userId.toLowerCase();
+            const userIdNoDashes = userId.replace(/-/g, '');
+            if (!mapping[userIdLower]) mapping[userIdLower] = [];
+            if (!mapping[userIdLower].includes(projectName)) {
+              mapping[userIdLower].push(projectName);
+            }
+            if (!mapping[userIdNoDashes]) mapping[userIdNoDashes] = [];
+            if (!mapping[userIdNoDashes].includes(projectName)) {
+              mapping[userIdNoDashes].push(projectName);
+            }
+          }
+        });
+      }
+    });
+    
+    return mapping;
+  }, [projectAllocations, allProjects, selectedDate]);
+
   // Handle user list button click
   const handleUserListClick = (type, data) => {
-    setUserListData(data);
+    // Enhance data with project names for allocated users
+    const enhancedData = type === 'allocated' ? data.map(user => {
+      const userId = String(user.id || user.user_id || '').trim();
+      const projects = getUserProjectsMapping[userId] || 
+                      getUserProjectsMapping[userId?.toLowerCase()] ||
+                      getUserProjectsMapping[userId?.replace(/-/g, '')] ||
+                      [];
+      return {
+        ...user,
+        allocated_projects_list: projects.join(', ') || 'No projects',
+        allocated_projects_count: projects.length,
+      };
+    }) : data;
+    
+    setUserListData(enhancedData);
+    setUserListType(type);
     setUserListTitle({
       total: 'All Users (Role: USER or ADMIN)',
       present: 'Present Users',
@@ -307,6 +377,68 @@ const ProjectResourceAllocation = () => {
     }[type] || 'Users');
     setShowUserListDialog(true);
   };
+
+  // Transform KPI cards into HoverEffect items format
+  const kpiItems = useMemo(() => {
+    return [
+      {
+        id: 'total-users',
+        title: 'Total Users',
+        value: userStats.total.toString(),
+        icon: <Users className="h-4 w-4" />,
+        description: 'All users with role USER or ADMIN',
+        onClick: () => handleUserListClick('total', usersData),
+      },
+      {
+        id: 'present',
+        title: 'Present',
+        value: userStats.present.toString(),
+        icon: <UserCheck className="h-4 w-4" />,
+        description: 'Users who are present today',
+        onClick: () => handleUserListClick('present', getPresentUsers()),
+      },
+      {
+        id: 'absent',
+        title: 'Absent',
+        value: userStats.absent.toString(),
+        icon: <UserX className="h-4 w-4" />,
+        description: 'Users who are absent today',
+        onClick: () => handleUserListClick('absent', getAbsentUsers()),
+      },
+      {
+        id: 'leave',
+        title: 'Leave',
+        value: userStats.leave.toString(),
+        icon: <AlertCircle className="h-4 w-4" />,
+        description: 'Users on leave today',
+        onClick: () => handleUserListClick('leave', getLeaveUsers()),
+      },
+      {
+        id: 'allocated',
+        title: 'Allocated',
+        value: userStats.allocated.toString(),
+        icon: <Briefcase className="h-4 w-4" />,
+        description: 'Users allocated to projects',
+        onClick: () => handleUserListClick('allocated', getAllocatedUsers()),
+      },
+      {
+        id: 'not-allocated',
+        title: 'Not Allocated',
+        value: userStats.notAllocated.toString(),
+        icon: <Users className="h-4 w-4" />,
+        description: 'Users not allocated to any project',
+        onClick: () => handleUserListClick('not_allocated', getNotAllocatedUsers()),
+      },
+      {
+        id: 'weekoff',
+        title: 'Weekoff',
+        value: userStats.weekoff.toString(),
+        icon: <CalendarIcon className="h-4 w-4" />,
+        description: 'Users on weekoff today',
+        onClick: () => handleUserListClick('weekoff', getWeekoffUsers()),
+      },
+    ];
+  }, [userStats, usersData, selectedDate, handleUserListClick, getUserProjectsMapping]);
 
   // Handle project card click
   const handleProjectClick = (type, projectData) => {
@@ -419,7 +551,10 @@ const ProjectResourceAllocation = () => {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold">📊 Project Resource Allocation Dashboard</h1>
+          <h1 className="text-3xl font-bold flex items-center gap-2">
+            <BarChart3 className="h-8 w-8" />
+            Project Resource Allocation Dashboard
+          </h1>
           <p className="text-muted-foreground mt-1">
             Comprehensive resource allocation, attendance, and productivity overview
           </p>
@@ -443,18 +578,34 @@ const ProjectResourceAllocation = () => {
 
       {/* Date Selector */}
       <div className="flex items-center gap-4">
-        <Popover>
+        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
           <PopoverTrigger asChild>
-            <Button variant="outline" className="w-[280px] justify-start text-left font-normal">
+            <Button 
+              variant="outline" 
+              className="w-[280px] justify-start text-left font-normal"
+              onClick={() => setDatePickerOpen(!datePickerOpen)}
+            >
               <CalendarIcon className="mr-2 h-4 w-4" />
               {selectedDate ? format(selectedDate, 'PPP') : 'Pick a date'}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto p-0">
+          <PopoverContent className="w-auto p-0" align="start" onOpenAutoFocus={(e) => e.preventDefault()}>
             <Calendar
+              mode="single"
               selected={selectedDate}
-              onSelect={(date) => date && setSelectedDate(date)}
-              disabled={(date) => date > new Date()}
+              onSelect={(date) => {
+                if (date) {
+                  setSelectedDate(date);
+                  setDatePickerOpen(false);
+                }
+              }}
+              disabled={(date) => {
+                const today = new Date();
+                today.setHours(23, 59, 59, 999);
+                return date > today;
+              }}
+              initialFocus
+              defaultMonth={selectedDate}
             />
           </PopoverContent>
         </Popover>
@@ -462,112 +613,156 @@ const ProjectResourceAllocation = () => {
 
       <Tabs defaultValue="overview" className="space-y-4">
         <TabsList>
-          <TabsTrigger value="overview">📊 Overview Dashboard</TabsTrigger>
-          <TabsTrigger value="visualizations">📈 Visualizations</TabsTrigger>
-          <TabsTrigger value="detailed">🔍 Detailed Project View</TabsTrigger>
+          <TabsTrigger value="overview" className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4" />
+            Overview Dashboard
+          </TabsTrigger>
+          <TabsTrigger value="visualizations" className="flex items-center gap-2">
+            <TrendingUp className="h-4 w-4" />
+            Visualizations
+          </TabsTrigger>
+          <TabsTrigger value="detailed" className="flex items-center gap-2">
+            <Search className="h-4 w-4" />
+            Detailed Project View
+          </TabsTrigger>
         </TabsList>
 
         {/* Overview Dashboard Tab */}
         <TabsContent value="overview" className="space-y-6">
           {/* User Overview */}
           <div>
-            <h2 className="text-2xl font-semibold mb-2">👥 User Overview</h2>
+            <h2 className="text-2xl font-semibold mb-2 flex items-center gap-2">
+              <Users className="h-6 w-6" />
+              User Overview
+            </h2>
             <p className="text-sm text-muted-foreground mb-4">
               Dashboard showing Total users count with role 'USER' or 'ADMIN', Count of present, absent, leave, allocated, not allocated, and weekoff
             </p>
             
-            <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4">
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('total', usersData)}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Total Users</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{userStats.total}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('present', getPresentUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Present</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-600">{userStats.present}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('absent', getAbsentUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Absent</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-600">{userStats.absent}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('leave', getLeaveUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Leave</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-yellow-600">{userStats.leave}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('allocated', getAllocatedUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Allocated</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-blue-600">{userStats.allocated}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('not_allocated', getNotAllocatedUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Not Allocated</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-gray-600">{userStats.notAllocated}</div>
-                </CardContent>
-              </Card>
-              
-              <Card className="cursor-pointer hover:bg-accent transition-colors" onClick={() => handleUserListClick('weekoff', getWeekoffUsers())}>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm font-medium">Weekoff</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-purple-600">{userStats.weekoff}</div>
-                </CardContent>
-              </Card>
-            </div>
+            {loading ? (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[1, 2, 3, 4, 5, 6, 7].map(i => (
+                  <Card key={i}>
+                    <CardHeader className="pb-2">
+                      <Skeleton className="h-4 w-20" />
+                    </CardHeader>
+                    <CardContent>
+                      <Skeleton className="h-8 w-16" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : kpiItems && kpiItems.length > 0 ? (
+              <HoverEffect items={kpiItems} className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" />
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {[1, 2, 3, 4, 5, 6, 7].map(i => (
+                  <Card key={i}>
+                    <CardHeader className="pb-2">
+                      <Skeleton className="h-4 w-20" />
+                    </CardHeader>
+                    <CardContent>
+                      <Skeleton className="h-8 w-16" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Overall Statistics */}
           <div>
-            <h2 className="text-2xl font-semibold mb-4">📊 Overall Statistics</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Total Hours Worked</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{overallStats.totalHours.toFixed(2)} hrs</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Total Tasks Completed</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{overallStats.totalTasks}</div>
-                </CardContent>
-              </Card>
-            </div>
+            <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
+              <BarChart3 className="h-6 w-6" />
+              Overall Statistics
+            </h2>
+            {loading ? (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {[1, 2].map(i => (
+                  <Card key={i}>
+                    <CardHeader>
+                      <Skeleton className="h-5 w-32" />
+                    </CardHeader>
+                    <CardContent>
+                      <Skeleton className="h-9 w-24" />
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div 
+                  className="relative group block p-2 h-full w-full"
+                  onMouseEnter={() => setHoveredOverallIndex(0)}
+                  onMouseLeave={() => setHoveredOverallIndex(null)}
+                >
+                  <AnimatePresence>
+                    {hoveredOverallIndex === 0 && (
+                      <motion.span
+                        className="absolute inset-0 h-full w-full bg-slate-700 dark:bg-cyan-500 block rounded-3xl"
+                        layoutId="hoverOverallBackground"
+                        initial={{ opacity: 0 }}
+                        animate={{
+                          opacity: 1,
+                          transition: { duration: 0.15 },
+                        }}
+                        exit={{
+                          opacity: 0,
+                          transition: { duration: 0.15, delay: 0.2 },
+                        }}
+                      />
+                    )}
+                  </AnimatePresence>
+                  <Card className="relative z-20 h-full">
+                    <CardHeader>
+                      <CardTitle>Total Hours Worked</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{overallStats.totalHours.toFixed(2)} hrs</div>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div 
+                  className="relative group block p-2 h-full w-full"
+                  onMouseEnter={() => setHoveredOverallIndex(1)}
+                  onMouseLeave={() => setHoveredOverallIndex(null)}
+                >
+                  <AnimatePresence>
+                    {hoveredOverallIndex === 1 && (
+                      <motion.span
+                        className="absolute inset-0 h-full w-full bg-slate-700 dark:bg-cyan-500 block rounded-3xl"
+                        layoutId="hoverOverallBackground"
+                        initial={{ opacity: 0 }}
+                        animate={{
+                          opacity: 1,
+                          transition: { duration: 0.15 },
+                        }}
+                        exit={{
+                          opacity: 0,
+                          transition: { duration: 0.15, delay: 0.2 },
+                        }}
+                      />
+                    )}
+                  </AnimatePresence>
+                  <Card className="relative z-20 h-full">
+                    <CardHeader>
+                      <CardTitle>Total Tasks Completed</CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <div className="text-3xl font-bold">{overallStats.totalTasks}</div>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Project Cards */}
           <div>
-            <h2 className="text-2xl font-semibold mb-4">📁 Project Cards</h2>
+            <h2 className="text-2xl font-semibold mb-4 flex items-center gap-2">
+              <FolderOpen className="h-6 w-6" />
+              Project Cards
+            </h2>
             {loading ? (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {[1, 2, 3].map(i => (
@@ -648,7 +843,10 @@ const ProjectResourceAllocation = () => {
 
         {/* Visualizations Tab */}
         <TabsContent value="visualizations" className="space-y-6">
-          <h2 className="text-2xl font-semibold">📈 Visualizations</h2>
+          <h2 className="text-2xl font-semibold flex items-center gap-2">
+            <TrendingUp className="h-6 w-6" />
+            Visualizations
+          </h2>
           
           {loading ? (
             <div className="space-y-4">
@@ -771,86 +969,202 @@ const ProjectResourceAllocation = () => {
 
       {/* User List Dialog */}
       <Dialog open={showUserListDialog} onOpenChange={setShowUserListDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
-          <DialogHeader>
-            <DialogTitle>{userListTitle}</DialogTitle>
-            <DialogDescription>
-              Showing {userListData.length} user(s)
-            </DialogDescription>
+        <DialogContent className="!w-[90vw] !max-w-[90vw] sm:!max-w-[90vw] max-h-[90vh] p-6">
+          <DialogHeader className="pb-4">
+            <div className="flex items-center justify-between pr-10">
+              <div>
+                <DialogTitle className="text-xl">{userListTitle}</DialogTitle>
+                <DialogDescription className="text-base">
+                  Showing {userListData.length} user(s) as of {format(selectedDate, 'MMMM dd, yyyy')}
+                </DialogDescription>
+              </div>
+              <Button onClick={() => exportToCSV(userListData, userListTitle.replace(/\s+/g, '_'))} className="mr-0">
+                <Download className="h-4 w-4 mr-2" />
+                Export CSV
+              </Button>
+            </div>
           </DialogHeader>
-          <ScrollArea className="max-h-[60vh]">
+          <div className="rounded-md border overflow-auto max-h-[70vh]">
             <Table>
-              <TableHeader>
+              <TableHeader className="sticky top-0 bg-background z-10 border-b">
                 <TableRow>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Email</TableHead>
-                  <TableHead>Work Role</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Allocated Projects</TableHead>
+                  <TableHead className="min-w-[150px] whitespace-nowrap">Name</TableHead>
+                  <TableHead className="min-w-[200px] whitespace-nowrap">Email</TableHead>
+                  <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
+                  <TableHead className="min-w-[100px] whitespace-nowrap">Status</TableHead>
+                  {userListType === 'allocated' ? (
+                    <>
+                      <TableHead className="min-w-[300px] whitespace-nowrap">Allocated Projects</TableHead>
+                      <TableHead className="min-w-[80px] text-center whitespace-nowrap">Count</TableHead>
+                    </>
+                  ) : (
+                    <TableHead className="min-w-[100px] whitespace-nowrap">Projects</TableHead>
+                  )}
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {userListData.map((user, idx) => (
-                  <TableRow key={idx}>
-                    <TableCell>{user.name || '-'}</TableCell>
-                    <TableCell>{user.email || '-'}</TableCell>
-                    <TableCell>{user.work_role || '-'}</TableCell>
-                    <TableCell>
-                      <Badge variant={
-                        user.today_status === 'PRESENT' ? 'default' :
-                        user.today_status === 'LEAVE' ? 'secondary' :
-                        user.today_status === 'WEEKOFF' ? 'outline' : 'destructive'
-                      }>
-                        {user.today_status || 'ABSENT'}
-                      </Badge>
+                {userListData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={userListType === 'allocated' ? 6 : 5} className="text-center py-8 text-muted-foreground">
+                      No users found
                     </TableCell>
-                    <TableCell>{user.allocated_projects || 0}</TableCell>
                   </TableRow>
-                ))}
+                ) : (
+                  userListData.map((user, idx) => (
+                    <TableRow key={user.id || user.user_id || idx} className="hover:bg-muted/50">
+                      <TableCell className="font-medium whitespace-nowrap">{user.name || '-'}</TableCell>
+                      <TableCell className="text-sm whitespace-nowrap">{user.email || '-'}</TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge variant="outline">{user.work_role || '-'}</Badge>
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">
+                        <Badge 
+                          variant={
+                            user.today_status === 'PRESENT' ? 'outline' :
+                            user.today_status === 'LEAVE' ? 'secondary' :
+                            user.today_status === 'WEEKOFF' ? 'outline' : 'outline'
+                          }
+                          className={`whitespace-nowrap ${
+                            user.today_status === 'PRESENT' 
+                              ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                              : (user.today_status === 'ABSENT' || !user.today_status)
+                              ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                              : ''
+                          }`}
+                        >
+                          {user.today_status || 'ABSENT'}
+                        </Badge>
+                      </TableCell>
+                      {userListType === 'allocated' ? (
+                        <>
+                          <TableCell className="text-sm">
+                            {user.allocated_projects_list || user.allocated_projects || 'No projects'}
+                          </TableCell>
+                          <TableCell className="text-center whitespace-nowrap">
+                            {user.allocated_projects_count !== undefined 
+                              ? user.allocated_projects_count 
+                              : (user.allocated_projects || 0)}
+                          </TableCell>
+                        </>
+                      ) : (
+                        <TableCell className="text-sm whitespace-nowrap">
+                          {user.allocated_projects || 0}
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
-          </ScrollArea>
-          <div className="flex justify-end mt-4">
-            <Button onClick={() => exportToCSV(userListData, userListTitle.replace(/\s+/g, '_'))}>
-              <Download className="h-4 w-4 mr-2" />
-              Export CSV
-            </Button>
+          </div>
+          <div className="flex justify-start items-center mt-4 pt-4 border-t">
+            <div className="text-sm text-muted-foreground">
+              Total: {userListData.length} user(s)
+            </div>
           </div>
         </DialogContent>
       </Dialog>
 
       {/* Project Dialog */}
       <Dialog open={showProjectDialog} onOpenChange={setShowProjectDialog}>
-        <DialogContent className="max-w-4xl max-h-[80vh]">
-          {projectDialogData && (
+        <DialogContent className="!w-[90vw] !max-w-[90vw] sm:!max-w-[90vw] max-h-[90vh] p-6">
+          {projectDialogData && projectDialogData.project ? (
             <>
-              <DialogHeader>
-                <DialogTitle>
-                  {projectDialogType === 'tasks' && `📋 Tasks Details - ${projectDialogData.project.name}`}
-                  {projectDialogType === 'hours' && `📋 Hours Details - ${projectDialogData.project.name}`}
-                  {projectDialogType === 'role' && `📋 Role Details - ${projectDialogData.project.name} - ${projectDialogData.role}`}
-                  {projectDialogType === 'users' && `📋 Users in Project - ${projectDialogData.project.name}`}
-                </DialogTitle>
+              <DialogHeader className="pb-4">
+                <div className="flex items-center justify-between pr-10">
+                  <DialogTitle className="text-xl">
+                    <span className="flex items-center gap-2">
+                      <ClipboardList className="h-5 w-5" />
+                      {projectDialogType === 'tasks' && `Tasks Details - ${projectDialogData.project.name}`}
+                      {projectDialogType === 'hours' && `Hours Details - ${projectDialogData.project.name}`}
+                      {projectDialogType === 'role' && `Role Details - ${projectDialogData.project.name} - ${projectDialogData.role}`}
+                      {projectDialogType === 'users' && `Users in Project - ${projectDialogData.project.name}`}
+                    </span>
+                  </DialogTitle>
+                  <Button onClick={() => {
+                    const filename = `${projectDialogData.project.name}_${projectDialogType}_${format(selectedDate, 'yyyy-MM-dd')}`;
+                    // Get table data for export based on type
+                    const tableData = [];
+                    if (projectDialogType === 'tasks' && projectDialogData.metrics) {
+                      projectDialogData.metrics.forEach(m => {
+                        const userId = String(m.user_id);
+                        const userName = userNameMapping[userId] || 'Unknown';
+                        tableData.push({
+                          user_name: userName,
+                          tasks_completed: m.tasks_completed || 0,
+                          hours_worked: m.hours_worked || 0,
+                          work_role: m.work_role || 'Unknown',
+                        });
+                      });
+                    } else if (projectDialogType === 'hours' && projectDialogData.metrics) {
+                      projectDialogData.metrics.forEach(m => {
+                        const userId = String(m.user_id);
+                        const userName = userNameMapping[userId] || 'Unknown';
+                        tableData.push({
+                          user_name: userName,
+                          hours_worked: m.hours_worked || 0,
+                          tasks_completed: m.tasks_completed || 0,
+                          work_role: m.work_role || 'Unknown',
+                        });
+                      });
+                    } else if (projectDialogType === 'role' && projectDialogData.metrics) {
+                      projectDialogData.metrics
+                        .filter(m => m.work_role === projectDialogData.role)
+                        .forEach(m => {
+                          const userId = String(m.user_id);
+                          const userName = userNameMapping[userId] || 'Unknown';
+                          tableData.push({
+                            user_name: userName,
+                            work_role: m.work_role || 'Unknown',
+                            hours_worked: m.hours_worked || 0,
+                            tasks_completed: m.tasks_completed || 0,
+                          });
+                        });
+                    } else if (projectDialogType === 'users' && projectDialogData.allocation?.resources) {
+                      const resources = aggregateByUser(projectDialogData.allocation.resources);
+                      const userAdminResources = resources.filter(r => 
+                        ['USER', 'ADMIN'].includes((r.designation || '').toUpperCase())
+                      );
+                      userAdminResources.forEach(r => {
+                        const userMetrics = (projectDialogData.metrics || []).filter(m => String(m.user_id) === String(r.user_id));
+                        const totalHours = userMetrics.reduce((sum, m) => sum + (m.hours_worked || 0), 0);
+                        const totalTasks = userMetrics.reduce((sum, m) => sum + (m.tasks_completed || 0), 0);
+                        tableData.push({
+                          name: r.name || '-',
+                          email: r.email || '-',
+                          designation: r.designation || '-',
+                          work_role: r.work_role || '-',
+                          attendance_status: r.attendance_status || '-',
+                          total_hours_clocked: totalHours.toFixed(2),
+                          total_tasks_performed: totalTasks,
+                        });
+                      });
+                    }
+                    if (tableData.length > 0) {
+                      exportToCSV(tableData, filename);
+                    } else {
+                      toast.error('No data to export');
+                    }
+                  }} className="mr-0">
+                    <Download className="h-4 w-4 mr-2" />
+                    Export CSV
+                  </Button>
+                </div>
               </DialogHeader>
-              <ScrollArea className="max-h-[60vh]">
+              <div className="rounded-md border overflow-auto max-h-[70vh]">
                 <ProjectDialogContent
                   type={projectDialogType}
                   data={projectDialogData}
                   userNameMapping={userNameMapping}
                   selectedDate={selectedDate}
+                  aggregateByUser={aggregateByUser}
                 />
-              </ScrollArea>
-              <div className="flex justify-end mt-4">
-                <Button onClick={() => {
-                  const filename = `${projectDialogData.project.name}_${projectDialogType}_${format(selectedDate, 'yyyy-MM-dd')}`;
-                  // Export logic would go here
-                  toast.info('Export functionality coming soon');
-                }}>
-                  <Download className="h-4 w-4 mr-2" />
-                  Export CSV
-                </Button>
               </div>
             </>
+          ) : (
+            <div className="p-4 text-center text-muted-foreground">
+              No data available
+            </div>
           )}
         </DialogContent>
       </Dialog>
@@ -951,149 +1265,178 @@ const DetailedProjectView = ({
 
   return (
     <div className="space-y-6">
-      <h2 className="text-2xl font-semibold">🔍 Detailed Project View</h2>
+      <h2 className="text-2xl font-semibold flex items-center gap-2">
+        <Search className="h-6 w-6" />
+        Detailed Project View
+      </h2>
       
       {/* Filters */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Select value={selectedProject} onValueChange={setSelectedProject}>
-          <SelectTrigger>
-            <SelectValue placeholder="Select Project" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="All">All</SelectItem>
-            {projects.map(project => (
-              <SelectItem key={project.id} value={project.name}>
-                {project.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-2">
+          <Label htmlFor="project-select" className="text-sm font-medium">Project</Label>
+          <Select value={selectedProject} onValueChange={setSelectedProject}>
+            <SelectTrigger id="project-select">
+              <SelectValue placeholder="Select Project" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="All">All</SelectItem>
+              {projects.map(project => (
+                <SelectItem key={project.id} value={project.name}>
+                  {project.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={designationFilter} onValueChange={setDesignationFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Designation" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">ALL</SelectItem>
-            <SelectItem value="ADMIN">ADMIN</SelectItem>
-            <SelectItem value="USER">USER</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="space-y-2">
+          <Label htmlFor="designation-select" className="text-sm font-medium">Designation</Label>
+          <Select value={designationFilter} onValueChange={setDesignationFilter}>
+            <SelectTrigger id="designation-select">
+              <SelectValue placeholder="Designation" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">ALL</SelectItem>
+              <SelectItem value="ADMIN">ADMIN</SelectItem>
+              <SelectItem value="USER">USER</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={statusFilter} onValueChange={setStatusFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Status" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">ALL</SelectItem>
-            <SelectItem value="PRESENT">PRESENT</SelectItem>
-            <SelectItem value="ABSENT">ABSENT</SelectItem>
-            <SelectItem value="LEAVE">LEAVE</SelectItem>
-          </SelectContent>
-        </Select>
+        <div className="space-y-2">
+          <Label htmlFor="status-select" className="text-sm font-medium">Status</Label>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger id="status-select">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">ALL</SelectItem>
+              <SelectItem value="PRESENT">PRESENT</SelectItem>
+              <SelectItem value="ABSENT">ABSENT</SelectItem>
+              <SelectItem value="LEAVE">LEAVE</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
 
-        <Select value={workRoleFilter} onValueChange={setWorkRoleFilter}>
-          <SelectTrigger>
-            <SelectValue placeholder="Work Role" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="ALL">ALL</SelectItem>
-            {WORK_ROLE_OPTIONS.map(role => (
-              <SelectItem key={role} value={role}>{role}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-2">
+          <Label htmlFor="work-role-select" className="text-sm font-medium">Work Role</Label>
+          <Select value={workRoleFilter} onValueChange={setWorkRoleFilter}>
+            <SelectTrigger id="work-role-select">
+              <SelectValue placeholder="Work Role" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="ALL">ALL</SelectItem>
+              {WORK_ROLE_OPTIONS.map(role => (
+                <SelectItem key={role} value={role}>{role}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
       </div>
 
-      {selectedProject !== 'All' && summary && (
-        <>
-          {/* Summary */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4">📌 Summary</h3>
-            <div className="grid grid-cols-4 gap-4">
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Allocated</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold">{summary.allocated}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Present</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-green-600">{summary.present}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Absent</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-red-600">{summary.absent}</div>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader className="pb-2">
-                  <CardTitle className="text-sm">Leave</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="text-2xl font-bold text-yellow-600">{summary.leave}</div>
-                </CardContent>
-              </Card>
+      {selectedProject !== 'All' ? (
+        summary ? (
+          <>
+            {/* Summary */}
+            <div>
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <Info className="h-5 w-5" />
+                Summary
+              </h3>
+              <div className="grid grid-cols-4 gap-4">
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Allocated</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold">{summary.allocated}</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Present</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-green-600">{summary.present}</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Absent</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-red-600">{summary.absent}</div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm">Leave</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="text-2xl font-bold text-yellow-600">{summary.leave}</div>
+                  </CardContent>
+                </Card>
+              </div>
             </div>
-          </div>
 
           {/* Daily Roster */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">👥 Daily Roster</h3>
-            <p className="text-sm text-muted-foreground mb-4">
-              📅 Showing tasks completed by members on {format(selectedDate, 'MMMM dd, yyyy')}
+            <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+              <Users className="h-5 w-5" />
+              Daily Roster
+            </h3>
+            <p className="text-sm text-muted-foreground mb-4 flex items-center gap-2">
+              <CalendarIcon className="h-4 w-4" />
+              Showing tasks completed by members on {format(selectedDate, 'MMMM dd, yyyy')}
             </p>
             {loading ? (
               <Skeleton className="h-64 w-full" />
             ) : filteredData && filteredData.length > 0 ? (
               <>
-                <div className="rounded-md border">
+                <div className="rounded-md border overflow-auto max-h-[600px]">
                   <Table>
-                    <TableHeader>
+                    <TableHeader className="sticky top-0 bg-background z-10 border-b">
                       <TableRow>
-                        <TableHead>Name</TableHead>
-                        <TableHead>Email</TableHead>
-                        <TableHead>Designation</TableHead>
-                        <TableHead>Work Role</TableHead>
-                        <TableHead>Status</TableHead>
-                        <TableHead>Tasks Done</TableHead>
-                        <TableHead>Total Tasks</TableHead>
-                        <TableHead>Clock In</TableHead>
-                        <TableHead>Clock Out</TableHead>
-                        <TableHead>Hours Worked</TableHead>
-                        <TableHead>Reporting Manager</TableHead>
+                        <TableHead className="min-w-[150px] whitespace-nowrap">Name</TableHead>
+                        <TableHead className="min-w-[200px] whitespace-nowrap">Email</TableHead>
+                        <TableHead className="min-w-[120px] whitespace-nowrap">Designation</TableHead>
+                        <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
+                        <TableHead className="min-w-[100px] whitespace-nowrap">Status</TableHead>
+                        <TableHead className="min-w-[200px] whitespace-nowrap">Tasks Done</TableHead>
+                        <TableHead className="min-w-[100px] whitespace-nowrap">Total Tasks</TableHead>
+                        <TableHead className="min-w-[120px] whitespace-nowrap">Clock In</TableHead>
+                        <TableHead className="min-w-[120px] whitespace-nowrap">Clock Out</TableHead>
+                        <TableHead className="min-w-[120px] whitespace-nowrap">Hours Worked</TableHead>
+                        <TableHead className="min-w-[150px] whitespace-nowrap">Reporting Manager</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
                       {filteredData.map((row, idx) => (
-                        <TableRow key={idx}>
-                          <TableCell>{row.name}</TableCell>
-                          <TableCell>{row.email}</TableCell>
-                          <TableCell>{row.designation}</TableCell>
-                          <TableCell>{row.work_role}</TableCell>
-                          <TableCell>
-                            <Badge variant={
-                              row.status === 'PRESENT' ? 'default' :
-                              row.status === 'LEAVE' ? 'secondary' : 'destructive'
-                            }>
+                        <TableRow key={idx} className="hover:bg-muted/50">
+                          <TableCell className="font-medium whitespace-nowrap">{row.name}</TableCell>
+                          <TableCell className="text-sm whitespace-nowrap">{row.email}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.designation}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.work_role}</TableCell>
+                          <TableCell className="whitespace-nowrap">
+                            <Badge 
+                              variant="outline"
+                              className={
+                                row.status === 'PRESENT' 
+                                  ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                                  : row.status === 'ABSENT'
+                                  ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                  : ''
+                              }
+                            >
                               {row.status}
                             </Badge>
                           </TableCell>
-                          <TableCell>{row.tasks_done}</TableCell>
-                          <TableCell>{row.total_tasks}</TableCell>
-                          <TableCell>{row.clock_in}</TableCell>
-                          <TableCell>{row.clock_out}</TableCell>
-                          <TableCell>{row.hours_worked}</TableCell>
-                          <TableCell>{row.reporting_manager}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.tasks_done}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.total_tasks}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.clock_in}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.clock_out}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.hours_worked}</TableCell>
+                          <TableCell className="whitespace-nowrap">{row.reporting_manager}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
@@ -1106,6 +1449,13 @@ const DetailedProjectView = ({
                   </Button>
                 </div>
               </>
+            ) : selectedProject === 'All' ? (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertDescription>
+                  Please select a project to view detailed allocation information.
+                </AlertDescription>
+              </Alert>
             ) : (
               <Alert>
                 <AlertCircle className="h-4 w-4" />
@@ -1115,12 +1465,11 @@ const DetailedProjectView = ({
               </Alert>
             )}
           </div>
-        </>
-      )}
-
-      {selectedProject === 'All' && (
+          </>
+        ) : null
+      ) : (
         <Alert>
-          <AlertCircle className="h-4 w-4" />
+          <Info className="h-4 w-4" />
           <AlertDescription>
             Please select a project to view detailed allocation information.
           </AlertDescription>
@@ -1131,8 +1480,14 @@ const DetailedProjectView = ({
 };
 
 // Project Dialog Content Component
-const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => {
-  if (!data) return null;
+const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate, aggregateByUser }) => {
+  if (!data || !data.project) {
+    return (
+      <div className="p-4 text-center text-muted-foreground">
+        No project data available
+      </div>
+    );
+  }
 
   const { project, metrics, allocation, role } = data;
 
@@ -1151,12 +1506,12 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => 
 
     return (
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 bg-background z-10 border-b">
           <TableRow>
-            <TableHead>User Name</TableHead>
-            <TableHead>Tasks Completed</TableHead>
-            <TableHead>Hours Worked</TableHead>
-            <TableHead>Work Role</TableHead>
+            <TableHead className="min-w-[150px] whitespace-nowrap">User Name</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Tasks Completed</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Hours Worked</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1188,12 +1543,12 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => 
 
     return (
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 bg-background z-10 border-b">
           <TableRow>
-            <TableHead>User Name</TableHead>
-            <TableHead>Hours Worked</TableHead>
-            <TableHead>Tasks Completed</TableHead>
-            <TableHead>Work Role</TableHead>
+            <TableHead className="min-w-[150px] whitespace-nowrap">User Name</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Hours Worked</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Tasks Completed</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1227,12 +1582,12 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => 
 
     return (
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 bg-background z-10 border-b">
           <TableRow>
-            <TableHead>User Name</TableHead>
-            <TableHead>Work Role</TableHead>
-            <TableHead>Hours Worked</TableHead>
-            <TableHead>Tasks Completed</TableHead>
+            <TableHead className="min-w-[150px] whitespace-nowrap">User Name</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Hours Worked</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Tasks Completed</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1277,15 +1632,15 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => 
 
     return (
       <Table>
-        <TableHeader>
+        <TableHeader className="sticky top-0 bg-background z-10 border-b">
           <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Email</TableHead>
-            <TableHead>Designation</TableHead>
-            <TableHead>Work Role</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Total Hours</TableHead>
-            <TableHead>Total Tasks</TableHead>
+            <TableHead className="min-w-[150px] whitespace-nowrap">Name</TableHead>
+            <TableHead className="min-w-[200px] whitespace-nowrap">Email</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Designation</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Work Role</TableHead>
+            <TableHead className="min-w-[100px] whitespace-nowrap">Status</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Total Hours</TableHead>
+            <TableHead className="min-w-[120px] whitespace-nowrap">Total Tasks</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
@@ -1296,10 +1651,16 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate }) => 
               <TableCell>{item.designation}</TableCell>
               <TableCell>{item.work_role}</TableCell>
               <TableCell>
-                <Badge variant={
-                  item.attendance_status === 'PRESENT' ? 'default' :
-                  item.attendance_status === 'LEAVE' ? 'secondary' : 'destructive'
-                }>
+                <Badge 
+                  variant="outline"
+                  className={
+                    item.attendance_status === 'PRESENT' 
+                      ? 'bg-green-500/10 text-green-500 border-green-500/20' 
+                      : item.attendance_status === 'ABSENT'
+                      ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                      : ''
+                  }
+                >
                   {item.attendance_status}
                 </Badge>
               </TableCell>

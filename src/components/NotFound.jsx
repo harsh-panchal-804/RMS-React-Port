@@ -38,7 +38,7 @@ const NotFound = () => {
           <h2 className="text-3xl md:text-4xl font-semibold text-white">
             Page Not Found
           </h2>
-          <p className="text-lg md:text-xl text-white/80 max-w-md">
+          <p className="text-lg md:text-xl text-white max-w-md">
             The page you're looking for doesn't exist or has been moved.
           </p>
         </div>

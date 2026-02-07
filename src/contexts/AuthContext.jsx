@@ -143,24 +143,10 @@ export function AuthProvider({ children }) {
           const accessToken = session.access_token;
           const userData = session.user;
           
-          // Check if we have stored user data
-          const storedUser = localStorage.getItem('user');
-          if (storedUser) {
-            try {
-              const user = JSON.parse(storedUser);
-              setUser(user);
-              setToken(accessToken);
-              localStorage.setItem('token', accessToken);
-              setLoading(false);
-              return;
-            } catch (error) {
-              console.error('Error parsing stored user data:', error);
-            }
-          }
-          
-          // If no stored user, sync from backend
-          // Note: syncRoleFromBackend is defined below, but we can call it here
-          // because it's hoisted in the function scope
+          // Always sync role from backend to ensure it's up-to-date
+          // This ensures role is always correct even if it changed on the backend
+          // or if localStorage has stale data
+          console.log('🔄 Re-validating role from backend...');
           await syncRoleFromBackend(accessToken, userData);
           return;
         }
@@ -168,19 +154,49 @@ export function AuthProvider({ children }) {
         console.log('ℹ️ No existing Supabase session:', error);
       }
       
-      // Fallback to localStorage
+      // Fallback to localStorage (only if no Supabase session)
       const storedToken = localStorage.getItem('token');
       const storedUser = localStorage.getItem('user');
       
       if (storedToken && storedUser) {
         try {
-          setToken(storedToken);
-          setUser(JSON.parse(storedUser));
-          setLoading(false);
+          const parsedUser = JSON.parse(storedUser);
+          // Validate token is still valid by checking with backend
+          try {
+            const response = await axios.get(`${API_BASE_URL}/me`, {
+              headers: {
+                'Authorization': `Bearer ${storedToken}`,
+                'Content-Type': 'application/json',
+              },
+            });
+            
+            if (response.status === 200) {
+              // Update role from backend response
+              const updatedUser = {
+                ...parsedUser,
+                role: response.data.role || parsedUser.role || 'USER',
+              };
+              setUser(updatedUser);
+              setToken(storedToken);
+              localStorage.setItem('user', JSON.stringify(updatedUser));
+              localStorage.setItem('userRole', updatedUser.role);
+              setLoading(false);
+            } else {
+              throw new Error('Invalid response');
+            }
+          } catch (validationError) {
+            // Token might be expired, try to refresh or clear
+            console.warn('⚠️ Token validation failed, clearing stored data');
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            localStorage.removeItem('userRole');
+            setLoading(false);
+          }
         } catch (error) {
           console.error('Error parsing stored user data:', error);
           localStorage.removeItem('token');
           localStorage.removeItem('user');
+          localStorage.removeItem('userRole');
           setLoading(false);
         }
       } else {

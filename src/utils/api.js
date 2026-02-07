@@ -100,80 +100,205 @@ export const authenticatedRequest = async (method, endpoint, params = null) => {
   }
 };
 
+// Simple in-memory cache for mappings with request deduplication
+let userMappingsCache = null;
+let projectMappingsCache = null;
+let userCacheTimestamp = null;
+let projectCacheTimestamp = null;
+let userMappingsPromise = null; // Promise for in-flight request
+let projectMappingsPromise = null; // Promise for in-flight request
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Cache for user_daily data with request deduplication
+const userDailyCache = new Map(); // key: cacheKey, value: { data, timestamp }
+const userDailyPromises = new Map(); // key: cacheKey, value: Promise
+const USER_DAILY_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes for data cache
+
+// Cache for getAllProjects and getAllUsers
+let projectsCache = null;
+let projectsCacheTimestamp = null;
+let projectsPromise = null;
+let usersCache = null;
+let usersCacheTimestamp = null;
+let usersPromise = null;
+const GENERAL_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
+// Cache for project-specific data
+const projectMetricsCache = new Map(); // key: cacheKey, value: { data, timestamp }
+const projectMetricsPromises = new Map(); // key: cacheKey, value: Promise
+const projectAllocationCache = new Map(); // key: cacheKey, value: { data, timestamp }
+const projectAllocationPromises = new Map(); // key: cacheKey, value: Promise
+const PROJECT_DATA_CACHE_DURATION = 2 * 60 * 1000; // 2 minutes
+
+// Generate cache keys
+const getProjectMetricsCacheKey = (projectId, startDate, endDate) => {
+  return `metrics_${projectId}_${startDate}_${endDate}`;
+};
+
+const getProjectAllocationCacheKey = (projectId, targetDate, onlyActive) => {
+  return `allocation_${projectId}_${targetDate}_${onlyActive}`;
+};
+
+/**
+ * Generate cache key for user_daily requests
+ */
+const getUserDailyCacheKey = (params) => {
+  const { user_id, project_id, start_date, end_date } = params || {};
+  return `user_daily_${user_id || 'all'}_${project_id || 'all'}_${start_date || 'all'}_${end_date || 'all'}`;
+};
+
+/**
+ * Fetch all users once and return all mappings (name, email, soulId)
+ * This consolidates getUserNameMapping, getUserEmailMapping, and getUserSoulIdMapping
+ * Uses request deduplication to prevent concurrent duplicate requests
+ */
+export const getAllUserMappings = async (useCache = true) => {
+  // Check cache
+  if (useCache && userMappingsCache && userCacheTimestamp) {
+    const now = Date.now();
+    if (now - userCacheTimestamp < CACHE_DURATION) {
+      console.log('📦 Using cached user mappings');
+      return userMappingsCache;
+    }
+  }
+
+  // If there's already an in-flight request, return that promise instead of making a new request
+  if (userMappingsPromise) {
+    console.log('⏳ Reusing in-flight user mappings request');
+    return userMappingsPromise;
+  }
+
+  // Create the request promise
+  userMappingsPromise = (async () => {
+    try {
+      console.log('🔄 Fetching user mappings from API...');
+      const users = await authenticatedRequest('GET', '/admin/users/', { limit: 1000 });
+      if (!users || !Array.isArray(users)) {
+        return { nameMap: {}, emailMap: {}, soulIdMap: {} };
+      }
+
+      const nameMap = {};
+      const emailMap = {};
+      const soulIdMap = {};
+
+      users.forEach((user) => {
+        const userId = String(user.id);
+        nameMap[userId] = user.name;
+        emailMap[userId] = user.email || '';
+        soulIdMap[userId] = user.soul_id ? String(user.soul_id) : '';
+      });
+
+      const mappings = { nameMap, emailMap, soulIdMap };
+      
+      // Update cache
+      userMappingsCache = mappings;
+      userCacheTimestamp = Date.now();
+      
+      console.log('✅ User mappings fetched and cached');
+      return mappings;
+    } catch (error) {
+      console.error('Error fetching user mappings:', error);
+      return { nameMap: {}, emailMap: {}, soulIdMap: {} };
+    } finally {
+      // Clear the promise so new requests can be made
+      userMappingsPromise = null;
+    }
+  })();
+
+  return userMappingsPromise;
+};
+
+/**
+ * Fetch all projects once and return name mapping
+ * Uses request deduplication to prevent concurrent duplicate requests
+ */
+export const getAllProjectMappings = async (useCache = true) => {
+  // Check cache
+  if (useCache && projectMappingsCache && projectCacheTimestamp) {
+    const now = Date.now();
+    if (now - projectCacheTimestamp < CACHE_DURATION) {
+      console.log('📦 Using cached project mappings');
+      return projectMappingsCache;
+    }
+  }
+
+  // If there's already an in-flight request, return that promise instead of making a new request
+  if (projectMappingsPromise) {
+    console.log('⏳ Reusing in-flight project mappings request');
+    return projectMappingsPromise;
+  }
+
+  // Create the request promise
+  projectMappingsPromise = (async () => {
+    try {
+      console.log('🔄 Fetching project mappings from API...');
+      let projects;
+      try {
+        projects = await authenticatedRequest('GET', '/admin/projects/', { limit: 1000 });
+      } catch (adminError) {
+        if (adminError.message && adminError.message.includes('401')) {
+          console.warn('Admin endpoint returned 401, trying regular projects endpoint...');
+          projects = await authenticatedRequest('GET', '/projects/', { limit: 1000 });
+        } else {
+          throw adminError;
+        }
+      }
+      
+      if (!projects || !Array.isArray(projects)) {
+        console.warn('Projects response is not an array:', projects);
+        return { nameMap: {} };
+      }
+
+      const nameMap = {};
+      projects.forEach((project) => {
+        nameMap[String(project.id)] = project.name;
+      });
+
+      const mappings = { nameMap };
+      
+      // Update cache
+      projectMappingsCache = mappings;
+      projectCacheTimestamp = Date.now();
+      
+      console.log('✅ Project mappings fetched and cached');
+      return mappings;
+    } catch (error) {
+      console.error('Error fetching project mappings:', error);
+      return { nameMap: {} };
+    } finally {
+      // Clear the promise so new requests can be made
+      projectMappingsPromise = null;
+    }
+  })();
+
+  return projectMappingsPromise;
+};
+
 /**
  * Fetch all users and create UUID -> name mapping
+ * @deprecated Use getAllUserMappings() instead for better performance
  */
 export const getUserNameMapping = async () => {
-  try {
-    const users = await authenticatedRequest('GET', '/admin/users/', { limit: 1000 });
-    if (!users || !Array.isArray(users)) {
-      return {};
-    }
-    return users.reduce((acc, user) => {
-      acc[String(user.id)] = user.name;
-      return acc;
-    }, {});
-  } catch (error) {
-    console.error('Error fetching user name mapping:', error);
-    return {};
-  }
+  const mappings = await getAllUserMappings();
+  return mappings.nameMap;
 };
 
 /**
  * Fetch all users and create UUID -> email mapping
+ * @deprecated Use getAllUserMappings() instead for better performance
  */
 export const getUserEmailMapping = async () => {
-  try {
-    const users = await authenticatedRequest('GET', '/admin/users/', { limit: 1000 });
-    if (!users || !Array.isArray(users)) {
-      return {};
-    }
-    return users.reduce((acc, user) => {
-      acc[String(user.id)] = user.email || '';
-      return acc;
-    }, {});
-  } catch (error) {
-    console.error('Error fetching user email mapping:', error);
-    return {};
-  }
+  const mappings = await getAllUserMappings();
+  return mappings.emailMap;
 };
 
 /**
  * Fetch all projects and create UUID -> name mapping
+ * @deprecated Use getAllProjectMappings() instead for better performance
  */
 export const getProjectNameMapping = async () => {
-  try {
-    // Try /admin/projects/ first, fallback to /projects/ if 401
-    let projects;
-    try {
-      projects = await authenticatedRequest('GET', '/admin/projects/', { limit: 1000 });
-    } catch (adminError) {
-      if (adminError.message && adminError.message.includes('401')) {
-        console.warn('Admin endpoint returned 401, trying regular projects endpoint...');
-        try {
-          projects = await authenticatedRequest('GET', '/projects/', { limit: 1000 });
-        } catch (regularError) {
-          console.error('Both endpoints failed:', regularError);
-          throw regularError;
-        }
-      } else {
-        throw adminError;
-      }
-    }
-    
-    if (!projects || !Array.isArray(projects)) {
-      console.warn('Projects response is not an array:', projects);
-      return {};
-    }
-    return projects.reduce((acc, project) => {
-      acc[String(project.id)] = project.name;
-      return acc;
-    }, {});
-  } catch (error) {
-    console.error('Error fetching project name mapping:', error);
-    console.warn('Returning empty project mapping - charts may not display project names');
-    return {};
-  }
+  const mappings = await getAllProjectMappings();
+  return mappings.nameMap;
 };
 
 /**
@@ -183,15 +308,26 @@ export const fetchProjectProductivityData = async (
   startDate = null,
   endDate = null,
   projectId = null,
-  fetchAll = true
+  fetchAll = true,
+  mappings = null // Accept mappings as parameter to avoid refetching
 ) => {
   try {
-    // Get name mappings
-    const [userMap, userEmailMap, projectMap] = await Promise.all([
-      getUserNameMapping(),
-      getUserEmailMapping(),
-      getProjectNameMapping(),
-    ]);
+    // Get mappings if not provided
+    let userMap, userEmailMap, projectMap;
+    if (mappings) {
+      userMap = mappings.userMap;
+      userEmailMap = mappings.userEmailMap;
+      projectMap = mappings.projectMap;
+    } else {
+      // Fetch all mappings in one go
+      const [userMappings, projectMappings] = await Promise.all([
+        getAllUserMappings(),
+        getAllProjectMappings(),
+      ]);
+      userMap = userMappings.nameMap;
+      userEmailMap = userMappings.emailMap;
+      projectMap = projectMappings.nameMap;
+    }
 
     // Prepare params
     const params = {};
@@ -362,22 +498,11 @@ export const fetchProjectProductivityData = async (
 
 /**
  * Get user soul ID mapping
+ * @deprecated Use getAllUserMappings() instead for better performance
  */
 export const getUserSoulIdMapping = async () => {
-  try {
-    const users = await authenticatedRequest('GET', '/admin/users/', { limit: 1000 });
-    if (!users || !Array.isArray(users)) {
-      return {};
-    }
-    return users.reduce((acc, user) => {
-      const soulId = user.soul_id;
-      acc[String(user.id)] = soulId ? String(soulId) : '';
-      return acc;
-    }, {});
-  } catch (error) {
-    console.error('Error fetching user soul ID mapping:', error);
-    return {};
-  }
+  const mappings = await getAllUserMappings();
+  return mappings.soulIdMap;
 };
 
 /**
@@ -388,16 +513,28 @@ export const fetchUserProductivityData = async (
   endDate = null,
   userId = null,
   projectId = null,
-  fetchAll = true
+  fetchAll = true,
+  mappings = null // Accept mappings as parameter to avoid refetching
 ) => {
   try {
-    // Get name mappings
-    const [userMap, userEmailMap, projectMap, soulIdMap] = await Promise.all([
-      getUserNameMapping(),
-      getUserEmailMapping(),
-      getProjectNameMapping(),
-      getUserSoulIdMapping(),
-    ]);
+    // Get mappings if not provided
+    let userMap, userEmailMap, projectMap, soulIdMap;
+    if (mappings) {
+      userMap = mappings.nameMap;
+      userEmailMap = mappings.emailMap;
+      soulIdMap = mappings.soulIdMap;
+      projectMap = mappings.projectMap;
+    } else {
+      // Fetch all mappings in one go
+      const [userMappings, projectMappings] = await Promise.all([
+        getAllUserMappings(),
+        getAllProjectMappings(),
+      ]);
+      userMap = userMappings.nameMap;
+      userEmailMap = userMappings.emailMap;
+      soulIdMap = userMappings.soulIdMap;
+      projectMap = projectMappings.nameMap;
+    }
 
     // Prepare params
     const params = {};
@@ -415,8 +552,40 @@ export const fetchUserProductivityData = async (
       params.end_date = defaultEnd;
     }
 
-    // Fetch user daily metrics
-    const userMetrics = await authenticatedRequest('GET', '/admin/metrics/user_daily/', params);
+    // Fetch user daily metrics with caching and request deduplication
+    let userMetrics;
+    const cacheKey = getUserDailyCacheKey(params);
+    const now = Date.now();
+    
+    // Check cache
+    const cached = userDailyCache.get(cacheKey);
+    if (cached && (now - cached.timestamp < USER_DAILY_CACHE_DURATION)) {
+      console.log('📦 Using cached user_daily data');
+      userMetrics = cached.data;
+    } else {
+      // Check if there's an in-flight request
+      if (userDailyPromises.has(cacheKey)) {
+        console.log('⏳ Reusing in-flight user_daily request');
+        userMetrics = await userDailyPromises.get(cacheKey);
+      } else {
+        // Create new request
+        const requestPromise = authenticatedRequest('GET', '/admin/metrics/user_daily/', params);
+        userDailyPromises.set(cacheKey, requestPromise);
+        
+        try {
+          userMetrics = await requestPromise;
+          // Cache the result
+          userDailyCache.set(cacheKey, { data: userMetrics, timestamp: now });
+          console.log('✅ User_daily data fetched and cached');
+        } catch (error) {
+          throw error;
+        } finally {
+          // Clear the promise
+          userDailyPromises.delete(cacheKey);
+        }
+      }
+    }
+    
     if (!userMetrics || !Array.isArray(userMetrics)) {
       return [];
     }
@@ -607,16 +776,126 @@ export const getUserRole = () => {
 };
 
 /**
- * Fetch all projects
+ * Fetch all projects with caching
  */
-export const getAllProjects = async () => {
-  try {
-    const projects = await authenticatedRequest('GET', '/admin/projects');
-    return Array.isArray(projects) ? projects : [];
-  } catch (error) {
-    console.error('Error fetching projects:', error);
-    return [];
+export const getAllProjects = async (useCache = true) => {
+  // Check cache
+  if (useCache && projectsCache && projectsCacheTimestamp) {
+    const now = Date.now();
+    if (now - projectsCacheTimestamp < GENERAL_CACHE_DURATION) {
+      console.log('📦 Using cached projects');
+      return projectsCache;
+    }
   }
+
+  // If there's already an in-flight request, return that promise instead of making a new request
+  if (projectsPromise) {
+    console.log('⏳ Reusing in-flight projects request');
+    return projectsPromise;
+  }
+
+  // Create the request promise
+  projectsPromise = (async () => {
+    try {
+      console.log('🔄 Fetching projects from API...');
+      // Try with trailing slash first (most common)
+      let projects = await authenticatedRequest('GET', '/admin/projects/');
+      if (!Array.isArray(projects)) {
+        // Fallback: try without trailing slash
+        projects = await authenticatedRequest('GET', '/admin/projects');
+      }
+      
+      if (!Array.isArray(projects)) {
+        return [];
+      }
+
+      // Update cache
+      projectsCache = projects;
+      projectsCacheTimestamp = Date.now();
+      console.log('✅ Projects fetched and cached');
+      return projects;
+    } catch (error) {
+      // If admin endpoint fails, try regular projects endpoint
+      if (error.response?.status === 404 || error.message?.includes('404')) {
+        try {
+          console.warn('Admin projects endpoint returned 404, trying regular projects endpoint...');
+          const projects = await authenticatedRequest('GET', '/projects/');
+          if (Array.isArray(projects)) {
+            projectsCache = projects;
+            projectsCacheTimestamp = Date.now();
+            return projects;
+          }
+        } catch (fallbackError) {
+          console.error('Error fetching projects from fallback endpoint:', fallbackError);
+        }
+      }
+      console.error('Error fetching projects:', error);
+      return [];
+    } finally {
+      // Clear the promise so new requests can be made
+      projectsPromise = null;
+    }
+  })();
+
+  return projectsPromise;
+};
+
+/**
+ * Fetch all users with caching
+ */
+export const getAllUsers = async (params = {}, useCache = true) => {
+  // Generate cache key based on params
+  const cacheKey = JSON.stringify(params);
+  const cacheEntry = usersCache?.[cacheKey];
+  
+  // Check cache (only if no params or params match)
+  if (useCache && cacheEntry && cacheEntry.timestamp) {
+    const now = Date.now();
+    if (now - cacheEntry.timestamp < GENERAL_CACHE_DURATION) {
+      console.log('📦 Using cached users');
+      return cacheEntry.data;
+    }
+  }
+
+  // If there's already an in-flight request with same params, return that promise
+  if (usersPromise && usersPromise.cacheKey === cacheKey) {
+    console.log('⏳ Reusing in-flight users request');
+    return usersPromise;
+  }
+
+  // Create the request promise
+  const requestPromise = (async () => {
+    try {
+      console.log('🔄 Fetching users from API...', params);
+      const users = await authenticatedRequest('GET', '/admin/users/', params);
+      const usersArray = Array.isArray(users) ? users : [];
+      
+      // Update cache
+      if (!usersCache) {
+        usersCache = {};
+      }
+      usersCache[cacheKey] = {
+        data: usersArray,
+        timestamp: Date.now(),
+      };
+      console.log('✅ Users fetched and cached');
+      return usersArray;
+    } catch (error) {
+      console.error('Error fetching all users:', error);
+      return [];
+    } finally {
+      // Clear the promise if it matches this request
+      if (usersPromise === requestPromise) {
+        usersPromise = null;
+      }
+    }
+  })();
+
+  // Store cache key on promise for deduplication
+  requestPromise.cacheKey = cacheKey;
+  usersPromise = requestPromise;
+
+  return requestPromise;
 };
 
 /**
@@ -635,18 +914,50 @@ export const getUsersWithFilter = async (date) => {
 /**
  * Fetch project metrics for a date range
  */
-export const getProjectMetrics = async (projectId, startDate, endDate) => {
-  try {
-    const metrics = await authenticatedRequest('GET', '/admin/metrics/user_daily/', {
-      project_id: projectId,
-      start_date: startDate,
-      end_date: endDate,
-    });
-    return Array.isArray(metrics) ? metrics : [];
-  } catch (error) {
-    console.error('Error fetching project metrics:', error);
-    return [];
+export const getProjectMetrics = async (projectId, startDate, endDate, useCache = true) => {
+  const cacheKey = getProjectMetricsCacheKey(projectId, startDate, endDate);
+  const now = Date.now();
+  
+  // Check cache
+  if (useCache) {
+    const cached = projectMetricsCache.get(cacheKey);
+    if (cached && (now - cached.timestamp < PROJECT_DATA_CACHE_DURATION)) {
+      console.log('📦 Using cached project metrics');
+      return cached.data;
+    }
   }
+
+  // Check for in-flight request
+  if (projectMetricsPromises.has(cacheKey)) {
+    console.log('⏳ Reusing in-flight project metrics request');
+    return projectMetricsPromises.get(cacheKey);
+  }
+
+  // Create request promise
+  const requestPromise = (async () => {
+    try {
+      console.log('🔄 Fetching project metrics from API...');
+      const metrics = await authenticatedRequest('GET', '/admin/metrics/user_daily/', {
+        project_id: projectId,
+        start_date: startDate,
+        end_date: endDate,
+      });
+      const metricsArray = Array.isArray(metrics) ? metrics : [];
+      
+      // Cache the result
+      projectMetricsCache.set(cacheKey, { data: metricsArray, timestamp: now });
+      console.log('✅ Project metrics fetched and cached');
+      return metricsArray;
+    } catch (error) {
+      console.error('Error fetching project metrics:', error);
+      return [];
+    } finally {
+      projectMetricsPromises.delete(cacheKey);
+    }
+  })();
+
+  projectMetricsPromises.set(cacheKey, requestPromise);
+  return requestPromise;
 };
 
 /**
@@ -668,16 +979,398 @@ export const getProjectRoleCounts = async (projectId, targetDate) => {
 /**
  * Fetch project allocation data for a specific date
  */
-export const getProjectAllocation = async (projectId, targetDate, onlyActive = true) => {
+export const getProjectAllocation = async (projectId, targetDate, onlyActive = true, useCache = true) => {
+  const cacheKey = getProjectAllocationCacheKey(projectId, targetDate, onlyActive);
+  const now = Date.now();
+  
+  // Check cache
+  if (useCache) {
+    const cached = projectAllocationCache.get(cacheKey);
+    if (cached && (now - cached.timestamp < PROJECT_DATA_CACHE_DURATION)) {
+      console.log('📦 Using cached project allocation');
+      return cached.data;
+    }
+  }
+
+  // Check for in-flight request
+  if (projectAllocationPromises.has(cacheKey)) {
+    console.log('⏳ Reusing in-flight project allocation request');
+    return projectAllocationPromises.get(cacheKey);
+  }
+
+  // Create request promise
+  const requestPromise = (async () => {
+    try {
+      console.log('🔄 Fetching project allocation from API...');
+      const allocation = await authenticatedRequest('GET', '/admin/project-resource-allocation/', {
+        project_id: projectId,
+        target_date: targetDate,
+        only_active: onlyActive,
+      });
+      
+      // Cache the result
+      projectAllocationCache.set(cacheKey, { data: allocation, timestamp: now });
+      console.log('✅ Project allocation fetched and cached');
+      return allocation;
+    } catch (error) {
+      console.error('Error fetching project allocation:', error);
+      return null;
+    } finally {
+      projectAllocationPromises.delete(cacheKey);
+    }
+  })();
+
+  projectAllocationPromises.set(cacheKey, requestPromise);
+  return requestPromise;
+};
+
+/**
+ * Get pending attendance requests
+ */
+export const getPendingAttendanceRequests = async (params = {}) => {
   try {
-    const allocation = await authenticatedRequest('GET', '/admin/project-resource-allocation/', {
-      project_id: projectId,
-      target_date: targetDate,
-      only_active: onlyActive,
-    });
-    return allocation;
+    const queryParams = { status: 'PENDING', ...params };
+    const requests = await authenticatedRequest('GET', '/admin/attendance-requests/', queryParams);
+    return Array.isArray(requests) ? requests : [];
   } catch (error) {
-    console.error('Error fetching project allocation:', error);
-    return null;
+    console.error('Error fetching pending attendance requests:', error);
+    return [];
+  }
+};
+
+/**
+ * Get all attendance requests with optional filters
+ */
+export const getAllAttendanceRequests = async (params = {}) => {
+  try {
+    const requests = await authenticatedRequest('GET', '/admin/attendance-requests/', params);
+    return Array.isArray(requests) ? requests : [];
+  } catch (error) {
+    console.error('Error fetching attendance requests:', error);
+    return [];
+  }
+};
+
+/**
+ * Get approval history
+ */
+export const getApprovalHistory = async (params = {}) => {
+  try {
+    const approvals = await authenticatedRequest('GET', '/admin/attendance-request-approvals/', params);
+    return Array.isArray(approvals) ? approvals : [];
+  } catch (error) {
+    console.error('Error fetching approval history:', error);
+    return [];
+  }
+};
+
+/**
+ * Submit approval/rejection for a request
+ */
+export const submitApproval = async (requestId, decision, comment = '') => {
+  try {
+    // Get current user ID from /me/ endpoint
+    const meData = await authenticatedRequest('GET', '/me/');
+    const approverUserId = meData?.id;
+    
+    if (!approverUserId) {
+      throw new Error('Could not get user ID');
+    }
+    
+    const payload = {
+      request_id: requestId,
+      approver_user_id: approverUserId,
+      decision: decision,
+      comment: comment,
+    };
+    
+    // For POST requests, authenticatedRequest expects params to be the data payload
+    const result = await authenticatedRequest('POST', '/admin/attendance-request-approvals/', payload);
+    return result;
+  } catch (error) {
+    console.error('Error submitting approval:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update an approval record
+ */
+export const updateApproval = async (approvalId, decision, comment) => {
+  try {
+    const payload = { decision, comment };
+    const result = await authenticatedRequest('PUT', `/admin/attendance-request-approvals/${approvalId}`, payload);
+    return result;
+  } catch (error) {
+    console.error('Error updating approval:', error);
+    throw error;
+  }
+};
+
+/**
+ * Delete an approval record
+ */
+export const deleteApproval = async (approvalId) => {
+  try {
+    const result = await authenticatedRequest('DELETE', `/admin/attendance-request-approvals/${approvalId}`);
+    return result;
+  } catch (error) {
+    console.error('Error deleting approval:', error);
+    throw error;
+  }
+};
+
+/**
+ * Submit quality assessment
+ */
+export const submitQualityAssessment = async (payload) => {
+  try {
+    const result = await authenticatedRequest('POST', '/admin/metrics/user_daily/quality', payload);
+    return result;
+  } catch (error) {
+    console.error('Error submitting quality assessment:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get quality ratings for a user/project/date range
+ */
+export const getQualityRatings = async (params) => {
+  try {
+    const ratings = await authenticatedRequest('GET', '/admin/metrics/user_daily/quality-ratings', params);
+    return Array.isArray(ratings) ? ratings : [];
+  } catch (error) {
+    console.error('Error fetching quality ratings:', error);
+    return [];
+  }
+};
+
+/**
+ * Bulk upload quality assessments via CSV
+ */
+export const bulkUploadQuality = async (file) => {
+  try {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/bulk_uploads/quality`,
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('Error bulk uploading quality assessments:', error);
+    throw error;
+  }
+};
+
+/**
+ * Create a new project
+ */
+export const createProject = async (payload) => {
+  try {
+    const result = await authenticatedRequest('POST', '/admin/projects/', payload);
+    return result;
+  } catch (error) {
+    console.error('Error creating project:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update a project
+ */
+export const updateProject = async (projectId, payload) => {
+  try {
+    const result = await authenticatedRequest('PUT', `/admin/projects/${projectId}`, payload);
+    return result;
+  } catch (error) {
+    console.error('Error updating project:', error);
+    throw error;
+  }
+};
+
+/**
+ * Bulk upload projects via CSV
+ */
+export const bulkUploadProjects = async (file) => {
+  try {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const formData = new FormData();
+    formData.append('file', file);
+
+    const response = await axios.post(
+      `${API_BASE_URL}/admin/bulk_uploads/projects`,
+      formData,
+      {
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+          'Content-Type': 'multipart/form-data',
+        },
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('Error bulk uploading projects:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get project members
+ */
+export const getProjectMembers = async (projectId) => {
+  try {
+    const members = await authenticatedRequest('GET', `/admin/projects/${projectId}/members`);
+    return Array.isArray(members) ? members : [];
+  } catch (error) {
+    console.error('Error fetching project members:', error);
+    return [];
+  }
+};
+
+/**
+ * Add member to project
+ */
+export const addProjectMember = async (projectId, payload) => {
+  try {
+    const result = await authenticatedRequest('POST', `/admin/projects/${projectId}/members`, payload);
+    return result;
+  } catch (error) {
+    console.error('Error adding project member:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update project member role
+ */
+export const updateProjectMemberRole = async (projectId, userId, payload) => {
+  try {
+    const result = await authenticatedRequest('PUT', `/admin/projects/${projectId}/members/${userId}`, payload);
+    return result;
+  } catch (error) {
+    console.error('Error updating project member role:', error);
+    throw error;
+  }
+};
+
+/**
+ * Remove member from project
+ */
+export const removeProjectMember = async (projectId, userId) => {
+  try {
+    const result = await authenticatedRequest('DELETE', `/admin/projects/${projectId}/members/${userId}`);
+    return result;
+  } catch (error) {
+    console.error('Error removing project member:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get daily roster report (role drilldown)
+ */
+export const getDailyRosterReport = async (params) => {
+  try {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const response = await axios.get(
+      `${API_BASE_URL}/reports/role-drilldown`,
+      {
+        params,
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+        },
+        responseType: 'blob', // Get CSV as blob
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching daily roster report:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get project history report
+ */
+export const getProjectHistoryReport = async (projectId) => {
+  try {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const response = await axios.get(
+      `${API_BASE_URL}/reports/project-history`,
+      {
+        params: { project_id: projectId },
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+        },
+        responseType: 'blob', // Get CSV as blob
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching project history report:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get user performance report
+ */
+export const getUserPerformanceReport = async (params) => {
+  try {
+    const token = getToken();
+    if (!token) {
+      throw new Error('No authentication token found');
+    }
+
+    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+    const response = await axios.get(
+      `${API_BASE_URL}/reports/user-performance`,
+      {
+        params,
+        headers: {
+          'Authorization': `Bearer ${cleanToken}`,
+        },
+        responseType: 'blob', // Get CSV as blob
+      }
+    );
+
+    return response.data;
+  } catch (error) {
+    console.error('Error fetching user performance report:', error);
+    throw error;
   }
 };

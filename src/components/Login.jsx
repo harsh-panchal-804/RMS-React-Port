@@ -1,7 +1,8 @@
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { TypographyMuted } from '@/components/ui/typography';
+import { TypographyMuted, TypographyP } from '@/components/ui/typography';
+import { BackgroundRippleEffect } from '@/components/ui/background-ripple-effect';
 import { Loader2, Shield } from 'lucide-react';
 
 export function Login() {
@@ -17,8 +18,9 @@ export function Login() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-background via-background to-muted p-4">
-      <Card className="w-full max-w-md">
+    <div className="relative flex min-h-screen w-full flex-col items-center justify-center overflow-hidden p-4">
+      <BackgroundRippleEffect rows={13} cols={50} cellSize={48} />
+      <Card className="relative z-10 w-full max-w-md">
         <CardHeader className="space-y-3 text-center">
           <div className="flex justify-center">
             <div className="rounded-full bg-primary/10 p-3">
@@ -72,9 +74,14 @@ export function Login() {
               </>
             )}
           </Button>
-          <TypographyMuted className="text-xs text-center">
-            By signing in, you agree to our terms of service and privacy policy.
-          </TypographyMuted>
+          <div className="space-y-2">
+            <TypographyP className="text-sm text-center text-foreground">
+              You can login via <span className="font-semibold">abc@teamdeccan.com</span> or <span className="font-semibold">abc@deccan.ai</span> only.
+            </TypographyP>
+            <TypographyMuted className="text-xs text-center">
+              By signing in, you agree to our terms of service and privacy policy.
+            </TypographyMuted>
+          </div>
         </CardContent>
       </Card>
     </div>

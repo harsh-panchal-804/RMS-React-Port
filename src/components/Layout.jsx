@@ -14,6 +14,9 @@ import { cn } from "@/lib/utils";
 import ProjectProductivityDashboard from "./Dashboard";
 import UserProductivityDashboard from "./UserDashboard";
 import ProjectResourceAllocation from "./ProjectResourceAllocation";
+import AttendanceRequestApprovals from "./AttendanceRequestApprovals";
+import ProjectManagementCenter from "./ProjectManagementCenter";
+import ReportsCenter from "./ReportsCenter";
 import Home from "./Home";
 import NotFound from "./NotFound";
 import { Login } from "./Login";
@@ -49,7 +52,7 @@ export function Layout() {
   }, [isAuthenticated, loading, user, token]);
   
   // Check if current route should hide sidebar (404 page)
-  const validRoutes = ["/", "/dashboard", "/user-dashboard", "/project-resource-allocation", "/404"];
+  const validRoutes = ["/", "/dashboard", "/user-dashboard", "/project-resource-allocation", "/attendance-approvals", "/project-management", "/reports", "/404"];
   const is404Page = !validRoutes.includes(location.pathname) || location.pathname === "/404";
 
   // Show loading state
@@ -75,35 +78,56 @@ export function Layout() {
       label: "Home",
       path: "/",
       icon: (
-        <IconHome className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+        <IconHome className="h-4 w-4  shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
       label: "Project Productivity Dashboard",
       path: "/dashboard",
       icon: (
-        <IconBrandTabler className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
       label: "User Productivity Dashboard",
       path: "/user-dashboard",
       icon: (
-        <IconBrandTabler className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
       label: "Project Resource Allocation",
       path: "/project-resource-allocation",
       icon: (
-        <IconUsersGroup className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+        <IconUsersGroup className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+      ),
+    },
+    {
+      label: "Attendance Approvals",
+      path: "/attendance-approvals",
+      icon: (
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+      ),
+    },
+    {
+      label: "Admin Projects",
+      path: "/project-management",
+      icon: (
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+      ),
+    },
+    {
+      label: "Reports Center",
+      path: "/reports",
+      icon: (
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
       label: "404 Page (Demo)",
       path: "/404",
       icon: (
-        <IconAlertTriangle className="h-5 w-5 shrink-0 text-neutral-700 dark:text-neutral-200" />
+        <IconAlertTriangle className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
   ];
@@ -122,7 +146,7 @@ export function Layout() {
       defaultOpen={false} 
       open={hoverOpen} 
       onOpenChange={setHoverOpen}
-      style={{ "--sidebar-width": "22rem", "--sidebar-width-icon": "3rem" }}
+      style={{ "--sidebar-width": "22rem", "--sidebar-width-icon": "3.5rem" }}
     >
       <div className="flex min-h-screen w-full relative">
         <div
@@ -220,6 +244,9 @@ export function Layout() {
               <Route path="/dashboard" element={<ProjectProductivityDashboard />} />
               <Route path="/user-dashboard" element={<UserProductivityDashboard />} />
               <Route path="/project-resource-allocation" element={<ProjectResourceAllocation />} />
+              <Route path="/attendance-approvals" element={<AttendanceRequestApprovals />} />
+              <Route path="/project-management" element={<ProjectManagementCenter />} />
+              <Route path="/reports" element={<ReportsCenter />} />
               <Route path="/404" element={<NotFound />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

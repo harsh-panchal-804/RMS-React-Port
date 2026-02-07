@@ -3,6 +3,8 @@ import { format, startOfMonth } from 'date-fns';
 import { CartesianGrid, Line, LineChart, XAxis, YAxis, Bar, BarChart, Area, AreaChart, Scatter, ScatterChart, ZAxis, Cell, RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis } from 'recharts';
 import {
   fetchProjectProductivityData,
+  getAllUserMappings,
+  getAllProjectMappings,
   getUserRole,
   getToken,
 } from '../utils/api';
@@ -92,7 +94,23 @@ const ProjectProductivityDashboard = () => {
         setLoading(true);
         setError(null);
         console.log('🔄 Starting to fetch data...');
-        const fetchedData = await fetchProjectProductivityData();
+        
+        // Get mappings first (will use cache if available)
+        const [userMappings, projectMappings] = await Promise.all([
+          getAllUserMappings(),
+          getAllProjectMappings(),
+        ]);
+        
+        // Pass mappings to avoid refetching
+        const fetchedData = await fetchProjectProductivityData(
+          null, null, null, true,
+          {
+            userMap: userMappings.nameMap,
+            userEmailMap: userMappings.emailMap,
+            projectMap: projectMappings.nameMap,
+          }
+        );
+        
         console.log('✅ Data fetched successfully:', fetchedData.length, 'records');
         setData(fetchedData);
       } catch (err) {
@@ -134,7 +152,23 @@ const ProjectProductivityDashboard = () => {
       setLoading(true);
       setError(null);
       console.log('🔄 Manually refreshing data...');
-      const fetchedData = await fetchProjectProductivityData();
+      
+      // Get mappings first (force refresh by bypassing cache)
+      const [userMappings, projectMappings] = await Promise.all([
+        getAllUserMappings(false), // Force refresh by bypassing cache
+        getAllProjectMappings(false),
+      ]);
+      
+      // Fetch data with mappings
+      const fetchedData = await fetchProjectProductivityData(
+        null, null, null, true,
+        {
+          userMap: userMappings.nameMap,
+          userEmailMap: userMappings.emailMap,
+          projectMap: projectMappings.nameMap,
+        }
+      );
+      
       console.log('✅ Data refreshed:', fetchedData.length, 'records');
       setData(fetchedData);
     } catch (err) {
@@ -984,26 +1018,26 @@ const ProjectProductivityDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <ScrollArea className="h-[400px] w-full">
+                  <div className="h-[400px] w-full overflow-auto">
                     <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Date</TableHead>
-                          <TableHead>Project</TableHead>
-                          <TableHead>User</TableHead>
-                          <TableHead>Email</TableHead>
-                          <TableHead>Role</TableHead>
-                          <TableHead>Hours</TableHead>
-                          <TableHead>Tasks</TableHead>
-                          <TableHead>Quality Rating</TableHead>
-                          <TableHead>Quality Score</TableHead>
-                          <TableHead>Accuracy</TableHead>
-                          <TableHead>Critical Rate</TableHead>
-                          <TableHead>Productivity</TableHead>
-                          <TableHead>Active Users</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="whitespace-nowrap">Date</TableHead>
+                            <TableHead className="whitespace-nowrap">Project</TableHead>
+                            <TableHead className="whitespace-nowrap">User</TableHead>
+                            <TableHead className="whitespace-nowrap">Email</TableHead>
+                            <TableHead className="whitespace-nowrap">Role</TableHead>
+                            <TableHead className="whitespace-nowrap">Hours</TableHead>
+                            <TableHead className="whitespace-nowrap">Tasks</TableHead>
+                            <TableHead className="whitespace-nowrap">Quality Rating</TableHead>
+                            <TableHead className="whitespace-nowrap">Quality Score</TableHead>
+                            <TableHead className="whitespace-nowrap">Accuracy</TableHead>
+                            <TableHead className="whitespace-nowrap">Critical Rate</TableHead>
+                            <TableHead className="whitespace-nowrap">Productivity</TableHead>
+                            <TableHead className="whitespace-nowrap">Active Users</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
                         {processedData
                           .sort((a, b) => b.date - a.date)
                           .slice(0, 100)
@@ -1031,12 +1065,13 @@ const ProjectProductivityDashboard = () => {
                               <TableCell>{row.tasks_completed}</TableCell>
                               <TableCell>
                                 <Badge
-                                  variant={
+                                  variant="outline"
+                                  className={
                                     row.quality_rating === 'Good'
-                                      ? 'default'
-                                      : row.quality_rating === 'Average'
-                                      ? 'secondary'
-                                      : 'destructive'
+                                      ? 'bg-green-500/10 text-green-500 border-green-500/20'
+                                      : row.quality_rating === 'Bad'
+                                      ? 'bg-red-500/10 text-red-500 border-red-500/20'
+                                      : ''
                                   }
                                 >
                                   {row.quality_rating}
@@ -1060,9 +1095,9 @@ const ProjectProductivityDashboard = () => {
                               <TableCell>{row.active_users}</TableCell>
                             </TableRow>
                           ))}
-                      </TableBody>
-                    </Table>
-                  </ScrollArea>
+                        </TableBody>
+                      </Table>
+                  </div>
                   <Alert className="mt-4">
                     <Info className="h-4 w-4" />
                     <AlertDescription className="text-xs">
