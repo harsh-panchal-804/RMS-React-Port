@@ -1,6 +1,6 @@
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_, func
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import and_, or_, func, select
 from typing import List, Optional
 from uuid import UUID
 from datetime import date, datetime
@@ -20,17 +20,20 @@ from app.schemas.user_daily_metrics import (
 router = APIRouter(prefix="/admin/metrics/user_daily", tags=["Metrics"])
 
 @router.post("/", response_model=UserDailyMetricsResponse)
-def upsert_daily_metrics(
+async def upsert_daily_metrics(
     payload: UserDailyMetricsCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    metrics = db.query(UserDailyMetrics).filter(
-        and_(
-            UserDailyMetrics.user_id == payload.user_id,
-            UserDailyMetrics.project_id == payload.project_id,
-            UserDailyMetrics.metric_date == payload.metric_date,
+    result = await db.execute(
+        select(UserDailyMetrics).filter(
+            and_(
+                UserDailyMetrics.user_id == payload.user_id,
+                UserDailyMetrics.project_id == payload.project_id,
+                UserDailyMetrics.metric_date == payload.metric_date,
+            )
         )
-    ).first()
+    )
+    metrics = result.scalar_one_or_none()
 
     if metrics:
         # UPDATE
@@ -44,19 +47,32 @@ def upsert_daily_metrics(
         metrics = UserDailyMetrics(**payload.model_dump())
         db.add(metrics)
 
-    db.commit()
-    db.refresh(metrics)
+    await db.commit()
+    await db.refresh(metrics)
     return metrics
 
 @router.get("/", response_model=List[UserDailyMetricsResponse])
-def get_daily_metrics(
+async def get_daily_metrics(
     user_id: Optional[UUID] = None,
     project_id: Optional[UUID] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    limit: int = Query(1000, ge=1, le=5000),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
 ):
-    query = db.query(UserDailyMetrics)
+    # Select explicit columns to reduce ORM object overhead on large ranges.
+    query = select(
+        UserDailyMetrics.id,
+        UserDailyMetrics.user_id,
+        UserDailyMetrics.project_id,
+        UserDailyMetrics.work_role,
+        UserDailyMetrics.metric_date,
+        UserDailyMetrics.hours_worked,
+        UserDailyMetrics.tasks_completed,
+        UserDailyMetrics.productivity_score,
+        UserDailyMetrics.notes,
+    )
 
     if user_id:
         query = query.filter(UserDailyMetrics.user_id == user_id)
@@ -67,7 +83,23 @@ def get_daily_metrics(
     if end_date:
         query = query.filter(UserDailyMetrics.metric_date <= end_date)
 
-    return query.order_by(UserDailyMetrics.metric_date.desc()).all()
+    query = query.order_by(UserDailyMetrics.metric_date.desc()).offset(offset).limit(limit)
+    result = await db.execute(query)
+    rows = result.all()
+    return [
+        UserDailyMetricsResponse(
+            id=row.id,
+            user_id=row.user_id,
+            project_id=row.project_id,
+            work_role=row.work_role,
+            metric_date=row.metric_date,
+            hours_worked=float(row.hours_worked) if row.hours_worked is not None else 0.0,
+            tasks_completed=row.tasks_completed or 0,
+            productivity_score=float(row.productivity_score) if row.productivity_score is not None else None,
+            notes=row.notes,
+        )
+        for row in rows
+    ]
 
 from app.services.user_project_history_service import (
     sync_user_project_history,
@@ -93,12 +125,12 @@ class QualityRatingResponse(BaseModel):
         from_attributes = True
 
 @router.get("/quality-ratings", response_model=List[QualityRatingResponse])
-def get_quality_ratings(
+async def get_quality_ratings(
     user_id: Optional[UUID] = None,
     project_id: Optional[UUID] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     Get quality ratings for users/projects in a date range.
@@ -118,7 +150,7 @@ def get_quality_ratings(
     
     # First, get quality ratings from UserQuality table directly
     # This ensures manual quality assessments show up even without daily metrics
-    quality_query = db.query(UserQuality).filter(
+    quality_query = select(UserQuality).filter(
         UserQuality.is_current == True
     )
     
@@ -128,7 +160,8 @@ def get_quality_ratings(
         quality_query = quality_query.filter(UserQuality.project_id == project_id)
     
     # Get all current quality records
-    quality_records = quality_query.all()
+    quality_result = await db.execute(quality_query)
+    quality_records = quality_result.scalars().all()
     
     # For each quality record, use the valid_from date as the metric_date
     # This shows the date the quality assessment applies to (the date it was assessed for)
@@ -163,7 +196,7 @@ def get_quality_ratings(
             })
     
     # Also get quality ratings for dates that have UserDailyMetrics (for backward compatibility)
-    metrics_query = db.query(UserDailyMetrics)
+    metrics_query = select(UserDailyMetrics)
     
     if user_id:
         metrics_query = metrics_query.filter(UserDailyMetrics.user_id == user_id)
@@ -174,7 +207,8 @@ def get_quality_ratings(
     if end_date:
         metrics_query = metrics_query.filter(UserDailyMetrics.metric_date <= end_date)
     
-    metrics = metrics_query.all()
+    metrics_result = await db.execute(metrics_query)
+    metrics = metrics_result.scalars().all()
     
     # OPTIMIZATION: Batch fetch all quality records in ONE query instead of N queries
     if metrics:
@@ -198,13 +232,15 @@ def get_quality_ratings(
             
             # Fetch all relevant quality records in ONE query
             if conditions:
-                all_quality_records = db.query(UserQuality).filter(
+                all_quality_query = select(UserQuality).filter(
                     or_(*conditions) if len(conditions) > 1 else conditions[0]
                 ).order_by(
                     UserQuality.user_id,
                     UserQuality.project_id,
                     UserQuality.valid_from.desc()
-                ).all()
+                )
+                all_quality_result = await db.execute(all_quality_query)
+                all_quality_records = all_quality_result.scalars().all()
             else:
                 all_quality_records = []
             
@@ -312,9 +348,9 @@ class QualityAssessmentResponse(BaseModel):
         from_attributes = True
 
 @router.post("/quality", response_model=QualityAssessmentResponse)
-def create_quality_assessment(
+async def create_quality_assessment(
     payload: QualityAssessmentCreate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -327,10 +363,13 @@ def create_quality_assessment(
     # Get work_role from project_members if not provided
     work_role = payload.work_role
     if not work_role:
-        member = db.query(ProjectMember).filter(
-            ProjectMember.user_id == payload.user_id,
-            ProjectMember.project_id == payload.project_id
-        ).first()
+        member_result = await db.execute(
+            select(ProjectMember).filter(
+                ProjectMember.user_id == payload.user_id,
+                ProjectMember.project_id == payload.project_id
+            )
+        )
+        member = member_result.scalar_one_or_none()
         if member:
             work_role = member.work_role
         else:
@@ -370,11 +409,14 @@ def create_quality_assessment(
             )
     
     # Find existing current quality record
-    current_quality = db.query(UserQuality).filter(
-        UserQuality.user_id == payload.user_id,
-        UserQuality.project_id == payload.project_id,
-        UserQuality.is_current == True
-    ).first()
+    current_quality_result = await db.execute(
+        select(UserQuality).filter(
+            UserQuality.user_id == payload.user_id,
+            UserQuality.project_id == payload.project_id,
+            UserQuality.is_current == True
+        )
+    )
+    current_quality = current_quality_result.scalar_one_or_none()
     
     # Archive existing record if it exists
     if current_quality:
@@ -404,8 +446,8 @@ def create_quality_assessment(
     )
     
     db.add(new_quality)
-    db.commit()
-    db.refresh(new_quality)
+    await db.commit()
+    await db.refresh(new_quality)
     
     # Return response
     return QualityAssessmentResponse(

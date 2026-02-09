@@ -1,7 +1,8 @@
 # app/api/admin/bulk_uploads.py
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.core.dependencies import get_current_user
 from app.models.project import Project
 from app.models.user import User, UserRole
@@ -12,13 +13,6 @@ import io
 from datetime import datetime, timedelta
 
 router = APIRouter(prefix="/admin/bulk_uploads", tags=["Admin - BulkUploads"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # For now kept the format for writing a CSV
 # email, name, role, date_of_joining, soul_id, work_role
@@ -42,7 +36,8 @@ PROJECT_REQUIRED_FIELDS = {
 }
 
 @router.post("/list/users")
-async def list_users(
+@run_with_sync_session()
+def list_users(
     active_only: bool = False,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -73,7 +68,8 @@ async def list_users(
     }
 
 @router.post("/users")
-async def bulk_upload_users(
+@run_with_sync_session()
+def bulk_upload_users(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _: User = Depends(get_current_user)
@@ -174,7 +170,8 @@ async def bulk_upload_users(
     }
 
 @router.post("/projects")
-async def bulk_upload_projects(
+@run_with_sync_session()
+def bulk_upload_projects(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user)
@@ -332,7 +329,8 @@ QUALITY_REQUIRED_FIELDS = {
 }
 
 @router.post("/quality")
-async def bulk_upload_quality(
+@run_with_sync_session()
+def bulk_upload_quality(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

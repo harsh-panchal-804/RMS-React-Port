@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from uuid import UUID
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.user_project_history import UserProjectHistory
 from app.schemas.user_project_history import UserProjectHistoryResponse
 
 router = APIRouter(prefix="/history", tags=["User Project History"])
 
 @router.get("/users/{user_id}", response_model=list[UserProjectHistoryResponse])
+@run_with_sync_session()
 def get_user_project_history(
     user_id: UUID,
     db: Session = Depends(get_db)
@@ -19,6 +21,7 @@ def get_user_project_history(
     )
 
 @router.get("/projects/{project_id}", response_model=list[UserProjectHistoryResponse])
+@run_with_sync_session()
 def get_project_user_history(
     project_id: UUID,
     db: Session = Depends(get_db)

@@ -6,6 +6,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.attendance_request import AttendanceRequest
 from app.schemas.attendance_request import (
     AttendanceRequestCreate,
@@ -27,6 +28,7 @@ router = APIRouter(
 
 # CREATE 
 @router.post("/", response_model=AttendanceRequestResponse)
+@run_with_sync_session()
 def create_request(
     payload: AttendanceRequestCreate,
     db: Session = Depends(get_db),
@@ -100,6 +102,7 @@ def create_request(
 
 # READ MY REQUESTS 
 @router.get("/", response_model=List[AttendanceRequestResponse])
+@run_with_sync_session()
 def get_my_requests(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -111,6 +114,7 @@ def get_my_requests(
 
 # READ BY ID
 @router.get("/{request_id}", response_model=AttendanceRequestResponse)
+@run_with_sync_session()
 def get_request(
     request_id: UUID,
     db: Session = Depends(get_db),
@@ -131,6 +135,7 @@ def get_request(
 
 # UPDATE
 @router.put("/{request_id}", response_model=AttendanceRequestResponse)
+@run_with_sync_session()
 def update_request(
     request_id: UUID,
     payload: AttendanceRequestUpdate,
@@ -157,6 +162,7 @@ def update_request(
 
 #  DELETE 
 @router.delete("/{request_id}")
+@run_with_sync_session()
 def delete_request(
     request_id: UUID,
     db: Session = Depends(get_db),

@@ -6,6 +6,7 @@ from uuid import UUID
 from datetime import date
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.core.dependencies import get_current_user
 from app.models.user import User, UserRole
 from app.models.project import Project
@@ -20,6 +21,7 @@ router = APIRouter(prefix="/project_manager", tags=["Project Manager"])
 
 # --- 1. GET PROJECTS MANAGED BY USER ---
 @router.get("/projects", response_model=List[ProjectResponse])
+@run_with_sync_session()
 def get_managed_projects(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -43,6 +45,7 @@ def get_managed_projects(
 
 # --- 2. GET MEMBERS OF A PROJECT ---
 @router.get("/projects/{project_id}/members", response_model=List[UserResponse])
+@run_with_sync_session()
 def get_project_members(
     project_id: UUID,
     db: Session = Depends(get_db),
@@ -78,6 +81,7 @@ def get_project_members(
 
 # --- 3. GET MEMBER PRODUCTIVITY HISTORY ---
 @router.get("/members/{member_id}/productivity", response_model=List[UserProductivityResponse])
+@run_with_sync_session()
 def get_member_productivity(
     member_id: UUID,
     project_id: Optional[UUID] = Query(None),

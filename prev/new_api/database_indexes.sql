@@ -157,6 +157,16 @@ CREATE INDEX IF NOT EXISTS idx_users_rpm
 ON users(rpm_user_id) 
 WHERE rpm_user_id IS NOT NULL;
 
+-- Index for created_at ordering (CRITICAL for /admin/users endpoint)
+-- Used by: User lists with pagination
+CREATE INDEX IF NOT EXISTS idx_users_created_at 
+ON users(created_at DESC);
+
+-- Index for email lookups (CRITICAL for /me endpoint and get_current_user)
+-- Used by: Authentication, user lookups by email
+CREATE INDEX IF NOT EXISTS idx_users_email 
+ON users(email);
+
 -- ============================================================================
 -- PROJECTS TABLE INDEXES
 -- ============================================================================

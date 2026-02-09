@@ -6,6 +6,7 @@ from typing import Optional
 from uuid import UUID
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.core.dependencies import get_current_user
 
 from app.models.project_members import ProjectMember
@@ -20,6 +21,7 @@ router = APIRouter(
 )
 
 @router.get("/")
+@run_with_sync_session()
 def role_drilldown(
     project_id: UUID,
     date_: date = Query(..., alias="date"),

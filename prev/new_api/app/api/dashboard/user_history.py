@@ -1,3 +1,4 @@
+from app.db.async_compat import run_with_sync_session
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import date
@@ -11,6 +12,7 @@ from app.models.user import User
 router = APIRouter(prefix="/dashboard/me", tags=["User Dashboard"])
 
 @router.get("/history", response_model=List[UserDailyMetricsResponse])
+@run_with_sync_session()
 def get_my_history(
     from_date: Optional[date] = Query(None),
     to_date: Optional[date] = Query(None),

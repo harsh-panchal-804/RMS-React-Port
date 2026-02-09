@@ -1,23 +1,16 @@
-from fastapi import APIRouter, Depends
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from app.core.dependencies import get_current_user
 from app.models.user import User
 from app.schemas.user import UserResponse, WeekoffUpdate
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
 
 router = APIRouter(prefix="/me", tags=["Me"])
 
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-
 @router.get("", response_model=UserResponse)
-def get_me(current_user: User = Depends(get_current_user)):
+async def get_me(current_user: User = Depends(get_current_user)):
     """Get current user info"""
     from app.schemas.user import WeekoffDays
     
@@ -46,24 +39,24 @@ def get_me(current_user: User = Depends(get_current_user)):
 
 
 @router.patch("/weekoffs", response_model=UserResponse)
-def update_my_weekoffs(
+async def update_my_weekoffs(
     payload: WeekoffUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user)
 ):
     """Update the current user's weekoffs (supports multiple)"""
     # Query user from current session to avoid session issues
-    user = db.query(User).filter(User.id == current_user.id).first()
+    result = await db.execute(select(User).filter(User.id == current_user.id))
+    user = result.scalar_one_or_none()
     if not user:
-        from fastapi import HTTPException, status
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     
     # Convert Pydantic enum list to SQLAlchemy enum list
     from app.models.user import WeekoffDays
     weekoff_enums = [WeekoffDays(w.value) for w in payload.weekoffs]
     user.weekoffs = weekoff_enums
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     
     # Return properly formatted response
     from app.schemas.user import WeekoffDays as SchemaWeekoffDays

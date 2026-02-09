@@ -9,6 +9,7 @@ import pandas as pd
 import io
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.project import Project
 from app.models.user import User
 from app.models.attendance_daily import AttendanceDaily
@@ -22,6 +23,7 @@ router = APIRouter(prefix="/reports", tags=["Reports & Exports"])
 # 1. DAILY SCORECARD (Used by Analytics Page)
 # ------------------------------------------------------------------
 @router.get("/project-daily-csv/{project_id}/{date_str}")
+@run_with_sync_session()
 def export_project_daily_report(
     project_id: UUID, 
     date_str: str, 
@@ -101,6 +103,7 @@ def export_project_daily_report(
 # 2. ROLE DRILLDOWN (Daily Roster)
 # ------------------------------------------------------------------
 @router.get("/role-drilldown")
+@run_with_sync_session()
 def export_role_drilldown(
     report_date: date,
     project_id: Optional[UUID] = None,
@@ -242,6 +245,7 @@ def export_role_drilldown(
 # 3. PROJECT ALL-TIME HISTORY
 # ------------------------------------------------------------------
 @router.get("/project-history")
+@run_with_sync_session()
 def export_project_history(
     project_id: UUID,
     db: Session = Depends(get_db)
@@ -294,6 +298,7 @@ def export_project_history(
 # 4. USER PERFORMANCE REPORT
 # ------------------------------------------------------------------
 @router.get("/user-performance")
+@run_with_sync_session()
 def export_user_performance(
     user_id: UUID,
     start_date: date,

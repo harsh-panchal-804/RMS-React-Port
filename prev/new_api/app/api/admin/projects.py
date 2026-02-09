@@ -1,10 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from sqlalchemy import or_
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import or_, select
 from typing import Optional
 from uuid import UUID
 from datetime import date
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectResponse
 from app.schemas.project import ProjectMemberDetail
@@ -22,21 +24,14 @@ class MemberRoleUpdate(BaseModel):
     work_role: str
 router = APIRouter(prefix="/admin/projects", tags=["Admin - Projects"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # ==========================================
 #              CORE PROJECT APIs
 # ==========================================
 from app.core.dependencies import get_current_user
 # --- GET LIST REQUEST (With Search, Status & Date Interval) ---
 @router.get("/", response_model=list[ProjectResponse])
-def list_projects(
-    db: Session = Depends(get_db),
+async def list_projects(
+    db: AsyncSession = Depends(get_db),
     # 1. ADD THIS LINE: We need to know WHO is asking to find their role
     current_user: User = Depends(get_current_user), 
     search: Optional[str] = None,
@@ -54,7 +49,7 @@ def list_projects(
             detail="'start_date_from' cannot be later than 'start_date_to'."
         )
 
-    query = db.query(Project)
+    query = select(Project)
 
     if search:
         search_fmt = f"%{search}%"
@@ -74,7 +69,8 @@ def list_projects(
     if start_date_to:
         query = query.filter(Project.start_date <= start_date_to)
 
-    projects = query.offset(skip).limit(limit).all()
+    projects_result = await db.execute(query.offset(skip).limit(limit))
+    projects = projects_result.scalars().all()
 
     # --- 2. NEW LOGIC: INJECT USER ROLES ---
     # Fetch all active project memberships for this user
@@ -82,15 +78,18 @@ def list_projects(
     # If reference_date is not provided, use today's date
     check_date = reference_date if reference_date is not None else date.today()
     
-    my_memberships = db.query(ProjectMember).filter(
-        ProjectMember.user_id == current_user.id,
-        ProjectMember.is_active == True,
-        ProjectMember.assigned_from <= check_date,  # Assignment has started (or will start by reference date)
-        or_(
-            ProjectMember.assigned_to.is_(None),  # No end date (ongoing)
-            ProjectMember.assigned_to >= check_date    # End date hasn't passed (or hasn't passed by reference date)
+    memberships_result = await db.execute(
+        select(ProjectMember).filter(
+            ProjectMember.user_id == current_user.id,
+            ProjectMember.is_active == True,
+            ProjectMember.assigned_from <= check_date,  # Assignment has started (or will start by reference date)
+            or_(
+                ProjectMember.assigned_to.is_(None),  # No end date (ongoing)
+                ProjectMember.assigned_to >= check_date    # End date hasn't passed (or hasn't passed by reference date)
+            )
         )
-    ).all()
+    )
+    my_memberships = memberships_result.scalars().all()
     
     # Create a lookup map: {project_id: "Role Name"}
     role_map = {m.project_id: m.work_role for m in my_memberships}
@@ -103,6 +102,7 @@ def list_projects(
     return projects
 # --- GET SINGLE PROJECT REQUEST ---
 @router.get("/{project_id}", response_model=ProjectResponse)
+@run_with_sync_session()
 def get_project(
     project_id: UUID,
     db: Session = Depends(get_db)
@@ -119,6 +119,7 @@ def get_project(
 
 # --- CREATE REQUEST ---
 @router.post("/", response_model=ProjectResponse)
+@run_with_sync_session()
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
     # 1. Check for Duplicate Code
     existing_project = db.query(Project).filter(Project.code == payload.code).first()
@@ -150,6 +151,7 @@ def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
 
 # --- UPDATE REQUEST ---
 @router.put("/{project_id}", response_model=ProjectResponse)
+@run_with_sync_session()
 def update_project(
     project_id: UUID,
     payload: ProjectCreate,
@@ -192,6 +194,7 @@ def update_project(
 
 # --- DELETE REQUEST ---
 @router.delete("/{project_id}")
+@run_with_sync_session()
 def deactivate_project(
     project_id: UUID,
     db: Session = Depends(get_db)
@@ -213,6 +216,7 @@ def deactivate_project(
 
 # --- ASSIGN OWNER (PM/APM) ---
 @router.post("/{project_id}/owners", response_model=OwnerResponse)
+@run_with_sync_session()
 def assign_owner(
     project_id: UUID, 
     payload: OwnerAssign, 
@@ -254,6 +258,7 @@ def assign_owner(
 
 # --- LIST OWNERS ---
 @router.get("/{project_id}/owners", response_model=list[OwnerResponse])
+@run_with_sync_session()
 def list_project_owners(
     project_id: UUID, 
     db: Session = Depends(get_db)
@@ -273,6 +278,7 @@ def list_project_owners(
 
 # --- REMOVE OWNER ---
 @router.delete("/{project_id}/owners/{user_id}")
+@run_with_sync_session()
 def remove_project_owner(
     project_id: UUID,
     user_id: UUID,
@@ -298,6 +304,7 @@ def remove_project_owner(
 
 # --- ASSIGN MEMBER ---
 @router.post("/{project_id}/members", response_model=MemberResponse)
+@run_with_sync_session()
 def assign_member(
     project_id: UUID, 
     payload: MemberAssign, 
@@ -344,6 +351,7 @@ def assign_member(
 # --- LIST MEMBERS ---
 
 @router.get("/{project_id}/members", response_model=list[ProjectMemberDetail])
+@run_with_sync_session()
 def list_project_members(
     project_id: UUID,
     db: Session = Depends(get_db)
@@ -375,6 +383,7 @@ def list_project_members(
 
 # --- REMOVE MEMBER (WORKER) ---
 @router.delete("/{project_id}/members/{user_id}")
+@run_with_sync_session()
 def remove_project_member(
     project_id: UUID, 
     user_id: UUID, 
@@ -397,6 +406,7 @@ def remove_project_member(
 
 
 @router.delete("/{project_id}/members/{user_id}")
+@run_with_sync_session()
 def remove_project_member(project_id: UUID, user_id: UUID, db: Session = Depends(get_db)):
     member = db.query(ProjectMember).filter(
         ProjectMember.project_id == project_id, 
@@ -412,6 +422,7 @@ def remove_project_member(project_id: UUID, user_id: UUID, db: Session = Depends
 
 # 3. ADD THIS TO THE BOTTOM (To update a worker's role)
 @router.put("/{project_id}/members/{user_id}")
+@run_with_sync_session()
 def update_project_member_role(
     project_id: UUID, 
     user_id: UUID, 

@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-from app.db.session import SessionLocal
+from app.db.session import SchedulerSessionLocal  # Use separate pool for scheduler
 from app.models.project import Project
 from app.models.history import TimeHistory
 from app.models.user_daily_metrics import UserDailyMetrics
@@ -218,8 +218,10 @@ def calculate_all_projects_automatically():
     all tasks must be manually approved before they are included in metrics.
     Processes last 30 days to catch up on any missed calculations and ensure
     all recent data is available for graphs.
+    
+    Uses separate database connection pool to avoid blocking API requests.
     """
-    db: Session = SessionLocal()
+    db: Session = SchedulerSessionLocal()  # Use separate pool to avoid blocking API
     try:
         # Get all active projects
         active_projects = db.query(Project).filter(Project.is_active == True).all()
@@ -401,13 +403,23 @@ def start_scheduler():
     scheduler.start()
     log_and_print("✅ Scheduler started - Automatic calculations will run every 6 hours")
     
-    # Run immediately on startup to catch up on any missed calculations
-    log_and_print("Running initial calculation on startup...")
-    try:
-        calculate_all_projects_automatically()
-    except Exception as e:
-        log_and_print(f"Error in initial calculation: {str(e)}", level='error')
-        logger.error(f"Error in initial calculation: {str(e)}", exc_info=True)
+    # Defer initial calculation to avoid blocking server startup
+    # Run after 30 seconds to let server fully start and handle initial requests
+    import time
+    def delayed_initial_calculation():
+        time.sleep(30)  # Wait 30 seconds for server to be ready
+        log_and_print("Running initial calculation (deferred from startup)...")
+        try:
+            calculate_all_projects_automatically()
+        except Exception as e:
+            log_and_print(f"Error in initial calculation: {str(e)}", level='error')
+            logger.error(f"Error in initial calculation: {str(e)}", exc_info=True)
+    
+    # Run in background thread to not block
+    import threading
+    thread = threading.Thread(target=delayed_initial_calculation, daemon=True)
+    thread.start()
+    log_and_print("Initial calculation scheduled to run in 30 seconds (non-blocking)")
 
 
 def stop_scheduler():

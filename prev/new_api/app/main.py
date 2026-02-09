@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 # from app.middlewares.auth import auth_middleware
 from app.api.admin import users, projects
@@ -7,10 +7,73 @@ from app.api.admin import projects_daily
 from dotenv import load_dotenv
 from app.api import analytics
 from app.api import reports
+import time
+import logging
+
 load_dotenv()
 
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Resource Management System")
+
+# Request logging middleware - MUST be first to catch all requests
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    """Log all incoming requests and response times"""
+    start_time = time.time()
+    
+    # Log incoming request
+    logger.info(f"→ {request.method} {request.url.path}")
+    
+    # Log connection pool status before request
+    from app.db.session import engine
+    # For async engines, use sync_engine to access pool
+    pool = engine.sync_engine.pool
+    checked_out_before = pool.checkedout()
+    
+    try:
+        response = await call_next(request)
+        process_time = time.time() - start_time
+        
+        # Log response immediately (don't delay response)
+        checked_out_after = pool.checkedout()
+        pool_size = pool.size()
+        max_overflow = pool._max_overflow if hasattr(pool, '_max_overflow') else 0
+        
+        # Log immediately - response is ready to send
+        logger.info(
+            f"← {request.method} {request.url.path} "
+            f"Status: {response.status_code} Time: {process_time:.3f}s "
+            f"Pool: {checked_out_after}/{pool_size + max_overflow}"
+        )
+        
+        # Warn on slow requests
+        if process_time > 2.0:
+            logger.warning(
+                f"⚠️ SLOW REQUEST: {request.method} {request.url.path} "
+                f"took {process_time:.2f}s"
+            )
+        
+        # Return response immediately - don't block on logging
+        return response
+    except Exception as e:
+        process_time = time.time() - start_time
+        pool = engine.sync_engine.pool
+        checked_out_after = pool.checkedout()
+        pool_size = pool.size()
+        max_overflow = pool._max_overflow if hasattr(pool, '_max_overflow') else 0
+        logger.error(
+            f"✗ {request.method} {request.url.path} "
+            f"ERROR after {process_time:.2f}s: {str(e)} "
+            f"Pool: {checked_out_after}/{pool_size + max_overflow}",
+            exc_info=True
+        )
+        raise
 
 # app.middleware("http")(auth_middleware)
 
@@ -73,22 +136,49 @@ from app.api.admin import role_drilldown
 app.include_router(admin_router)
 app.include_router(role_drilldown.router)
 
-# Start scheduler for automatic calculations
-from app.services.scheduler_service import start_scheduler
+# Scheduler DISABLED for testing - uncomment to re-enable
+# from app.services.scheduler_service import start_scheduler
 
 @app.on_event("startup")
 async def startup_event():
-    """Start the scheduler when the application starts"""
+    """Application startup"""
+    logger.info("🚀 Application starting up...")
+    logger.info("⏸️ Scheduler is DISABLED for testing")
+    # Scheduler disabled for testing
+    # try:
+    #     start_scheduler()
+    # except Exception as e:
+    #     logger.error(f"Warning: Could not start scheduler: {e}")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint to verify server is responding"""
+    from app.db.session import engine
+    from sqlalchemy import text
     try:
-        start_scheduler()
+        # Check database connection (async)
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+            await conn.commit()
+        pool = engine.sync_engine.pool
+        return {
+            "status": "ok",
+            "pool_size": pool.size(),
+            "checked_out": pool.checkedout(),
+            "overflow": pool.overflow(),
+            "driver": "asyncpg"
+        }
     except Exception as e:
-        print(f"Warning: Could not start scheduler: {e}")
+        logger.error(f"Health check failed: {e}")
+        return {"status": "error", "message": str(e)}
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    """Stop the scheduler when the application shuts down"""
-    from app.services.scheduler_service import stop_scheduler
-    try:
-        stop_scheduler()
-    except Exception as e:
-        print(f"Warning: Could not stop scheduler: {e}")
+    """Application shutdown"""
+    logger.info("🛑 Application shutting down...")
+    # Scheduler disabled for testing
+    # from app.services.scheduler_service import stop_scheduler
+    # try:
+    #     stop_scheduler()
+    # except Exception as e:
+    #     logger.error(f"Warning: Could not stop scheduler: {e}")

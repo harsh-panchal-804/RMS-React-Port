@@ -5,6 +5,7 @@ from datetime import date
 from uuid import UUID
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.history import TimeHistory
 from app.models.user_daily_metrics import UserDailyMetrics
 from app.models.project_daily_metrics import ProjectDailyMetrics
@@ -17,6 +18,7 @@ from app.models.user import User
 router = APIRouter(prefix="/analytics", tags=["Analytics Engine"])
 
 @router.post("/calculate-daily")
+@run_with_sync_session()
 def calculate_daily_productivity(
     project_id: UUID, 
     calculation_date: date, 

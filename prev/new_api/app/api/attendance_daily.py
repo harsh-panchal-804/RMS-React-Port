@@ -4,6 +4,7 @@ from typing import List, Optional
 from uuid import UUID
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.attendance_daily import AttendanceDaily
 from app.schemas.attendance_daily import (
     AttendanceDailyCreate,
@@ -18,6 +19,7 @@ router = APIRouter(
 
 #CREATE (POST)
 @router.post("/", response_model=AttendanceDailyResponse)
+@run_with_sync_session()
 def create_attendance(
     payload: AttendanceDailyCreate,
     db: Session = Depends(get_db),
@@ -32,6 +34,7 @@ def create_attendance(
 
 #READ[LIST] - (GET)
 @router.get("/", response_model=List[AttendanceDailyResponse])
+@run_with_sync_session()
 def list_attendance(
     user_id: Optional[UUID] = None,
     project_id: Optional[UUID] = None,
@@ -53,6 +56,7 @@ def list_attendance(
 
 #READ(GET)
 @router.get("/{attendance_id}", response_model=AttendanceDailyResponse)
+@run_with_sync_session()
 def get_attendance(
     attendance_id: UUID,
     db: Session = Depends(get_db),
@@ -71,6 +75,7 @@ def get_attendance(
 
 #UPDATE (PUT)
 @router.put("/{attendance_id}", response_model=AttendanceDailyResponse)
+@run_with_sync_session()
 def update_attendance(
     attendance_id: UUID,
     payload: AttendanceDailyUpdate,
@@ -98,6 +103,7 @@ def update_attendance(
 
 #DELETE (DELETE)
 @router.delete("/{attendance_id}", status_code=status.HTTP_204_NO_CONTENT)
+@run_with_sync_session()
 def delete_attendance(
     attendance_id: UUID,
     db: Session = Depends(get_db),

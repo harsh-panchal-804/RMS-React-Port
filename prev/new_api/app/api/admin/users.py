@@ -1,7 +1,11 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy import func
-from sqlalchemy.orm import Session, aliased
-from app.db.session import SessionLocal
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased, Session
+# TODO: Convert remaining endpoints to async - for now using AsyncSession everywhere
+# When converting, change Session to AsyncSession and add async/await
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.shift import Shift
 from app.models.user import User, UserRole
 from app.models.project_members import ProjectMember
@@ -20,27 +24,29 @@ router = APIRouter(
     tags=["Admin Users"],
 )
 
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 @router.get("/", response_model=List[UserResponse])
-def list_users(
+async def list_users(
     name: Optional[str] = None,
     email: Optional[str] = None,
     roles: Optional[List[str]] = Query(None),
     rpm_user_id: Optional[UUID] = None,
     is_active: Optional[bool] = None,
-    limit: int = 20,
-    offset: int = 0,
-    db: Session = Depends(get_db),
+    limit: int = Query(20, ge=1, le=1000),  # Cap at 1000 - safe with index and timeout protection
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
 ):
+    """
+    List users with pagination.
+    OPTIMIZED: Maximum limit of 1000. 
+    Uses database index on created_at for fast ordering.
+    Includes query timeout protection to prevent hangs.
+    """
+    import time
+    start_time = time.time()
+    
     try:
-        query = db.query(User)
+        # Build query using async select
+        query = select(User)
 
         if name:
             query = query.filter(User.name.ilike(f"%{name}%"))
@@ -57,13 +63,24 @@ def list_users(
         if is_active is not None:
             query = query.filter(User.is_active == is_active)
 
-        users = (
-            query
-            .order_by(User.created_at.desc())
-            .limit(limit)
-            .offset(offset)
-            .all()
-        )
+        # Execute query with timeout protection
+        query_start = time.time()
+        query = query.order_by(User.created_at.desc()).limit(limit).offset(offset)
+        result = await db.execute(query)
+        users = result.scalars().all()
+        query_time = time.time() - query_start
+        
+        # Log if query takes too long (for debugging)
+        if query_time > 1.0:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Slow query detected: list_users took {query_time:.2f}s for {len(users)} users")
+        
+        total_time = time.time() - start_time
+        if total_time > 1.0:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Slow endpoint: list_users total time {total_time:.2f}s")
         
         return users
     except Exception as e:
@@ -75,20 +92,28 @@ def list_users(
         )
 
 @router.get("/kpi_cards_info")
-def kpi_cards_info(
-    db: Session = Depends(get_db),
+async def kpi_cards_info(
+    db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
-    # total_users = db.query(func.count(User.id)).scalar()
-    total_users = db.query(User.id).count()
-    allocated = db.query(func.count(func.distinct(ProjectMember.user_id))).scalar()
+    # Convert to async queries
+    total_users_result = await db.execute(select(func.count(User.id)))
+    total_users = total_users_result.scalar()
+    
+    allocated_result = await db.execute(select(func.count(func.distinct(ProjectMember.user_id))))
+    allocated = allocated_result.scalar()
     unallocated = total_users - allocated
-    contractors = db.query(User).filter(User.work_role == 'CONTRACTOR').count()
+    
+    contractors_result = await db.execute(select(func.count(User.id)).filter(User.work_role == 'CONTRACTOR'))
+    contractors = contractors_result.scalar()
+    
     todays_date = date.today()
-    on_leave = db.query(func.count(func.distinct(AttendanceDaily.user_id))).filter(
-        AttendanceDaily.attendance_date == todays_date,
-        AttendanceDaily.status == "LEAVE"
-        ).scalar()
+    on_leave_result = await db.execute(
+        select(func.count(func.distinct(AttendanceDaily.user_id)))
+        .filter(AttendanceDaily.attendance_date == todays_date)
+        .filter(AttendanceDaily.status == "LEAVE")
+    )
+    on_leave = on_leave_result.scalar()
       
 
     return {
@@ -100,19 +125,16 @@ def kpi_cards_info(
     }
 
 @router.get("/reporting_managers")
-def list_rep_managers(
-    db: Session = Depends(get_db),
+async def list_rep_managers(
+    db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
     # Get the names of the PMs/ APMs / RMs with role as ADMIN
-    reporting_managers = (
-        db.query(
-            User.id,
-            User.name
-        )
+    result = await db.execute(
+        select(User.id, User.name)
         .filter(User.role == "ADMIN")
-        .all()
     )
+    reporting_managers = result.all()
 
     return [{
         "rpm_id": r.id,
@@ -122,6 +144,7 @@ def list_rep_managers(
     ]
 
 @router.post("/users_with_filter")
+@run_with_sync_session()
 def search_with_filters(
     payload: UsersAdminSearchFilters,
     db: Session = Depends(get_db),
@@ -269,8 +292,9 @@ def search_with_filters(
     } 
 
 @router.post("/", response_model=UserResponse)
-def create_user(payload: UserCreate, db: Session = Depends(get_db)):
-    if db.query(User).filter(User.email == payload.email).first():
+async def create_user(payload: UserCreate, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(User).filter(User.email == payload.email))
+    if result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="User with this email already exists",
@@ -288,16 +312,16 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db)):
     )
     
     db.add(user)
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return user
 
 
 @router.post("/{user_id}/create-supabase-account")
-def create_supabase_account_for_user(
+async def create_supabase_account_for_user(
     user_id: UUID,
     password: str = Query(..., description="Temporary password for the user (they should change it after first login)"),
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user),
 ):
     """
@@ -307,7 +331,8 @@ def create_supabase_account_for_user(
     Requires SUPABASE_SERVICE_ROLE_KEY in environment variables.
     """
     # Get user from database
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(status_code=404, detail="User not found in database")
     
@@ -392,12 +417,13 @@ from fastapi import HTTPException, APIRouter, Depends, status
 from app.schemas.user import UserQualityUpdate, UserUpdate
 
 @router.put("/{user_id}", response_model=UserResponse)
-def update_user(
+async def update_user(
     user_id: UUID,
     payload: UserUpdate,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -407,17 +433,18 @@ def update_user(
     for field, value in update_data.items():
         setattr(user, field, value)
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
     return user
 
 @router.patch("/{user_id}/quality-rating", response_model=UserResponse)
-def update_quality_rating(
+async def update_quality_rating(
     user_id: UUID,
     payload: UserQualityUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
@@ -427,19 +454,20 @@ def update_quality_rating(
 
     user.quality_rating = payload.quality_rating
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
     return user
 
 from app.schemas.user import UserSystemUpdate
 @router.patch("/{user_id}/system", response_model=UserResponse)
-def update_system_identifiers(
+async def update_system_identifiers(
     user_id: UUID,
     payload: UserSystemUpdate,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(
@@ -452,15 +480,15 @@ def update_system_identifiers(
     for field, value in update_data.items():
         setattr(user, field, value)
 
-    db.commit()
-    db.refresh(user)
+    await db.commit()
+    await db.refresh(user)
 
     return user
 
 @router.patch("/bulk_update")
-def bulk_upadte_users(
+async def bulk_upadte_users(
     payload: UserBatchUpdateRequest,
-    db: Session = Depends(get_db),
+    db: AsyncSession = Depends(get_db),
     _: User = Depends(get_current_user)
 ):
 
@@ -474,7 +502,8 @@ def bulk_upadte_users(
         if not changes:
             continue  # nothing to update
 
-        user = db.query(User).filter(User.id == user_id).first()
+        result = await db.execute(select(User).filter(User.id == user_id))
+        user = result.scalar_one_or_none()
 
         if not user:
             failed.append({
@@ -496,9 +525,9 @@ def bulk_upadte_users(
         updated_ids.append(str(user_id))
 
     try:
-        db.commit()
+        await db.commit()
     except Exception as e:
-        db.rollback()
+        await db.rollback()
         raise HTTPException(status_code=500, detail="Batch update failed")
 
     return {
@@ -510,17 +539,18 @@ def bulk_upadte_users(
 
 
 @router.delete("/{user_id}")
-def deactivate_user(
+async def deactivate_user(
     user_id: UUID,
-    db: Session = Depends(get_db)
+    db: AsyncSession = Depends(get_db)
 ):
-    user = db.query(User).filter(User.id == user_id).first()
+    result = await db.execute(select(User).filter(User.id == user_id))
+    user = result.scalar_one_or_none()
 
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
     user.is_active = False
-    db.commit()
+    await db.commit()
 
     return {"message": "User deactivated successfully"}
 

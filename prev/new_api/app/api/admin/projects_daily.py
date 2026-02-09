@@ -4,7 +4,8 @@ from sqlalchemy import func
 from datetime import date
 from uuid import UUID
 
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.history import TimeHistory
 from app.models.project import Project
 from app.models.project_metrics import ProjectDailyMetric
@@ -13,16 +14,10 @@ from app.schemas.project_metrics import MetricCalculationRequest, ProjectMetricR
 # We keep the prefix specific so your URL is clean: /admin/metrics/project/...
 router = APIRouter(prefix="/admin/projects_daily", tags=["Admin - Metrics"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # --- 1. CALCULATE METRICS ---
 # URL: POST /admin/metrics/project/calculate
 @router.post("/project/calculate", response_model=list[ProjectMetricResponse])
+@run_with_sync_session()
 def calculate_daily_metrics(
     payload: MetricCalculationRequest,
     db: Session = Depends(get_db)
@@ -84,6 +79,7 @@ def calculate_daily_metrics(
 # --- 2. GET REPORT ---
 # URL: GET /admin/metrics/project/{project_id}
 @router.get("/project/{project_id}", response_model=list[ProjectMetricResponse])
+@run_with_sync_session()
 def get_project_metrics(
     project_id: UUID, 
     start_date: date = None,

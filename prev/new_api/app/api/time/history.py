@@ -4,7 +4,8 @@ from datetime import datetime, date
 from typing import List, Optional
 import uuid
 from uuid import UUID
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.history import TimeHistory
 from app.models.project import Project
 from app.models.attendance_daily import AttendanceDaily
@@ -16,15 +17,9 @@ from app.schemas.history import ApprovalRequest
 
 router = APIRouter(prefix="/time", tags=["Time Tracking"])
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 # --- 1. CLOCK IN ---
 @router.post("/clock-in", response_model=TimeHistoryResponse)
+@run_with_sync_session()
 def clock_in(
     payload: ClockInRequest,
     db: Session = Depends(get_db),
@@ -112,6 +107,7 @@ def clock_in(
 
 # --- 2. CLOCK OUT ---
 @router.put("/clock-out", response_model=TimeHistoryResponse)
+@run_with_sync_session()
 def clock_out(
     payload: ClockOutRequest,
     db: Session = Depends(get_db),
@@ -155,6 +151,7 @@ def clock_out(
 
 # --- 3. GET HISTORY ---
 @router.get("/history", response_model=List[TimeHistoryResponse])
+@run_with_sync_session()
 def get_history(
     start_date: Optional[date] = Query(None),
     end_date: Optional[date] = Query(None),
@@ -184,6 +181,7 @@ def get_history(
 
 # --- 4. APPROVE SESSION (Manager Action) ---
 @router.put("/history/{history_id}/approve", response_model=TimeHistoryResponse)
+@run_with_sync_session()
 def approve_session(
     history_id: UUID,
     payload: ApprovalRequest,
@@ -238,6 +236,7 @@ def approve_session(
 
 # --- 5. GET CURRENT ACTIVE SESSION (For Home Page Logic) ---
 @router.get("/current", response_model=Optional[TimeHistoryResponse])
+@run_with_sync_session()
 def get_current_active_session(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),

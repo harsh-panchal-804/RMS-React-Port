@@ -1,3 +1,4 @@
+from app.db.async_compat import run_with_sync_session
 from datetime import date
 from typing import Optional
 from uuid import UUID
@@ -19,6 +20,7 @@ router = APIRouter(
 
 
 @router.get("/")
+@run_with_sync_session()
 def project_resource_allocation(
     project_id: str = Query(..., description="Project UUID"),
     target_date: date = Query(date.today()),
@@ -114,6 +116,7 @@ def project_resource_allocation(
 
 
 @router.get("/role-counts")
+@run_with_sync_session()
 def get_project_role_counts(
     project_id: str = Query(..., description="Project UUID"),
     target_date: date = Query(date.today()),

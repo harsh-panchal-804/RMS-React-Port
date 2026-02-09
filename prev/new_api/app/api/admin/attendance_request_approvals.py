@@ -5,6 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.attendance_request import AttendanceRequest
 from app.models.attendance_request_approval import AttendanceRequestApproval
 from app.models.attendance_daily import AttendanceDaily
@@ -27,6 +28,7 @@ router = APIRouter(
 # 1. CREATE APPROVAL (The "Smart" Endpoint)
 # ------------------------------------------------------------------
 @router.post("/", response_model=AttendanceRequestApprovalResponse)
+@run_with_sync_session()
 def create_approval(
     payload: AttendanceRequestApprovalCreate,
     db: Session = Depends(get_db),
@@ -117,6 +119,7 @@ def create_approval(
 # 2. LIST APPROVALS (Audit Log)
 # ------------------------------------------------------------------
 @router.get("/", response_model=List[AttendanceRequestApprovalResponse])
+@run_with_sync_session()
 def list_approvals(
     request_id: Optional[UUID] = None,
     approver_user_id: Optional[UUID] = None,
@@ -148,6 +151,7 @@ def list_approvals(
 # 3. GET SINGLE APPROVAL
 # ------------------------------------------------------------------
 @router.get("/{approval_id}", response_model=AttendanceRequestApprovalResponse)
+@run_with_sync_session()
 def get_approval(approval_id: UUID, db: Session = Depends(get_db)):
     approval = db.query(AttendanceRequestApproval).filter(
         AttendanceRequestApproval.id == approval_id
@@ -162,6 +166,7 @@ def get_approval(approval_id: UUID, db: Session = Depends(get_db)):
 # 4. UPDATE APPROVAL (Correction)
 # ------------------------------------------------------------------
 @router.put("/{approval_id}", response_model=AttendanceRequestApprovalResponse)
+@run_with_sync_session()
 def update_approval(
     approval_id: UUID,
     payload: AttendanceRequestApprovalUpdate,
@@ -189,6 +194,7 @@ def update_approval(
 # 5. DELETE APPROVAL
 # ------------------------------------------------------------------
 @router.delete("/{approval_id}")
+@run_with_sync_session()
 def delete_approval(approval_id: UUID, db: Session = Depends(get_db)):
     approval = db.query(AttendanceRequestApproval).filter(
         AttendanceRequestApproval.id == approval_id

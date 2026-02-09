@@ -4,12 +4,14 @@ from uuid import UUID
 from typing import List
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.shift import Shift
 from app.schemas.shift import ShiftCreate, ShiftUpdate, ShiftResponse
 
 router = APIRouter(prefix="/admin/shifts", tags=["Admin Shifts"])
 
 @router.post("/", response_model=ShiftResponse)
+@run_with_sync_session()
 def create_shift(payload: ShiftCreate, db: Session = Depends(get_db)):
     shift = Shift(**payload.model_dump())
     db.add(shift)
@@ -18,10 +20,12 @@ def create_shift(payload: ShiftCreate, db: Session = Depends(get_db)):
     return shift
 
 @router.get("/", response_model=List[ShiftResponse])
+@run_with_sync_session()
 def list_shifts(db: Session = Depends(get_db)):
     return db.query(Shift).all()
 
 @router.get("/{shift_id}", response_model=ShiftResponse)
+@run_with_sync_session()
 def get_shift(shift_id: UUID, db: Session = Depends(get_db)):
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if not shift:
@@ -29,6 +33,7 @@ def get_shift(shift_id: UUID, db: Session = Depends(get_db)):
     return shift
 
 @router.put("/{shift_id}", response_model=ShiftResponse)
+@run_with_sync_session()
 def update_shift(
     shift_id: UUID,
     payload: ShiftUpdate,
@@ -46,6 +51,7 @@ def update_shift(
     return shift
 
 @router.delete("/{shift_id}")
+@run_with_sync_session()
 def delete_shift(shift_id: UUID, db: Session = Depends(get_db)):
     shift = db.query(Shift).filter(Shift.id == shift_id).first()
     if not shift:

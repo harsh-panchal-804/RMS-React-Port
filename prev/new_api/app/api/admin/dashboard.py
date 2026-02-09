@@ -4,7 +4,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 from datetime import date, datetime
 
-from app.db.session import SessionLocal
+from app.db.session import get_db  # Use centralized get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.user import User, UserRole
 from app.models.project import Project
 from app.models.history import TimeHistory
@@ -19,15 +20,8 @@ from app.core.dependencies import get_current_user
 # Define the Router
 router = APIRouter(prefix="/admin/dashboard", tags=["Admin - Dashboard"])
 
-# Database Dependency
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
 @router.get("/stats", response_model=GlobalStatsResponse)
+@run_with_sync_session()
 def get_global_stats(db: Session = Depends(get_db)):
     """
     Returns the high-level metrics for the top of the dashboard.
@@ -60,6 +54,7 @@ def get_global_stats(db: Session = Depends(get_db)):
     )
 
 @router.get("/live", response_model=list[LiveWorkerResponse])
+@run_with_sync_session()
 def get_live_workers(db: Session = Depends(get_db)):
     """
     Returns a list of users who have Clocked In but NOT Clocked Out.
@@ -106,6 +101,7 @@ def get_live_workers(db: Session = Depends(get_db)):
 
 
 @router.get("/pending-approvals", response_model=list[PendingApprovalResponse])
+@run_with_sync_session()
 def get_pending_approvals(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user)

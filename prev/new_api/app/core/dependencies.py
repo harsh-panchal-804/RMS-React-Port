@@ -1,10 +1,11 @@
 import os
 import uuid
 from fastapi import Depends, Header, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from datetime import date
 
-from app.db.session import SessionLocal
+from app.db.session import get_db as get_db_session  # Import centralized get_db
 from app.models.user import User, UserRole
 
 # Note: uuid and date are still used in DISABLE_AUTH mode for creating local admin user
@@ -24,12 +25,8 @@ if DISABLE_AUTH:
 else:
     print("🔒 AUTH MODE: ENABLED (Supabase Google Authentication Required)")
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+# Re-export get_db from centralized location to maintain compatibility
+get_db = get_db_session
 
 # ============================================
 # TEMPORARY AUTH BYPASS - Supabase Auth Disabled
@@ -39,37 +36,86 @@ def get_db():
 # ============================================
 
 if DISABLE_AUTH:
-    def get_current_user(db: Session = Depends(get_db)) -> User:
+    # Cache the admin user to avoid database query on every request
+    _cached_admin_user = None
+    _cache_lock = None
+    
+    async def get_current_user(db: AsyncSession = Depends(get_db)) -> User:
         """
         AUTH BYPASS MODE - Returns a default admin user.
         No authentication required - all requests use admin@local.dev
+        Uses caching to avoid database query on every request.
         """
-        user = db.query(User).filter(User.email == "admin@local.dev").first()
+        import logging
+        import asyncio
+        logger = logging.getLogger(__name__)
+        
+        global _cached_admin_user, _cache_lock
+        
+        # Use cached user if available (fast path)
+        if _cached_admin_user is not None:
+            return _cached_admin_user
+        
+        # Initialize lock if needed
+        if _cache_lock is None:
+            _cache_lock = asyncio.Lock()
+        
+        # Only one request should query the database
+        async with _cache_lock:
+            # Double-check after acquiring lock
+            if _cached_admin_user is not None:
+                return _cached_admin_user
+            
+            # Query database with index (should be fast)
+            result = await db.execute(select(User).filter(User.email == "admin@local.dev"))
+            user = result.scalar_one_or_none()
 
-        if not user:
-            user = User(
-                id=uuid.uuid4(),
-                email="admin@local.dev",
-                name="Local Admin",
-                role=UserRole.ADMIN,
-                is_active=True,
-                doj=date.today(),
-            )
-            db.add(user)
-            db.commit()
-            db.refresh(user)
-
-        return user
+            if not user:
+                try:
+                    user = User(
+                        id=uuid.uuid4(),
+                        email="admin@local.dev",
+                        name="Local Admin",
+                        role=UserRole.ADMIN,
+                        is_active=True,
+                        doj=date.today(),
+                    )
+                    db.add(user)
+                    await db.commit()
+                    await db.refresh(user)
+                    logger.info("Created admin@local.dev user")
+                except Exception as e:
+                    # Handle race condition: another request created the user
+                    await db.rollback()
+                    logger.debug(f"Race condition detected in user creation: {e}")
+                    # Retry query - user should exist now
+                    result = await db.execute(select(User).filter(User.email == "admin@local.dev"))
+                    user = result.scalar_one_or_none()
+                    if not user:
+                        logger.error(f"Failed to create/get admin user after retry: {e}")
+                        raise
+            
+            # Cache the user for future requests
+            _cached_admin_user = user
+            return user
 else:
     # Supabase Auth Mode - Google OAuth only
     from app.core.supabase_auth import get_user_from_token
+    import hashlib
+    import asyncio
+    import time
     
-    def get_current_user(
+    # Cache for Supabase token validation (5 minute TTL)
+    _token_cache = {}
+    _token_cache_lock = asyncio.Lock()
+    
+    async def get_current_user(
         authorization: str = Header(...),
-        db: Session = Depends(get_db),
+        db: AsyncSession = Depends(get_db),
     ) -> User:
         """
         SUPABASE AUTH MODE - Validates Supabase tokens from Google OAuth.
+        Uses token caching to reduce Supabase API calls.
         """
         if not authorization.startswith("Bearer "):
             raise HTTPException(
@@ -78,13 +124,48 @@ else:
             )
 
         token = authorization.replace("Bearer ", "")
+        token_hash = hashlib.sha256(token.encode()).hexdigest()[:16]
         
-        # Validate token with Supabase
+        # Check cache first (fast path). Keep lock scope small to avoid contention.
+        cached_data = None
+        async with _token_cache_lock:
+            cached_data = _token_cache.get(token_hash)
+
+        if cached_data and (time.time() - cached_data["timestamp"] < 300):  # 5 minute cache
+            user_email = cached_data["email"]
+            result = await db.execute(select(User).filter(User.email == user_email))
+            user = result.scalar_one_or_none()
+            if user and user.is_active:
+                return user
+        
+        # Validate token with Supabase (slow path - only if not cached).
+        # Run sync network call in a worker thread so it doesn't block the event loop.
         try:
-            supabase_user = get_user_from_token(token)
+            supabase_user = await asyncio.wait_for(
+                asyncio.to_thread(get_user_from_token, token),
+                timeout=5.0,
+            )
+        except asyncio.TimeoutError:
+            raise HTTPException(
+                status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+                detail="Auth provider timeout. Please retry.",
+            )
+        try:
+            
+            # Cache the token result
+            async with _token_cache_lock:
+                _token_cache[token_hash] = {
+                    'email': supabase_user.email,
+                    'timestamp': time.time()
+                }
+                # Clean old cache entries (keep last 100)
+                if len(_token_cache) > 100:
+                    oldest = min(_token_cache.items(), key=lambda x: x[1]['timestamp'])
+                    del _token_cache[oldest[0]]
             
             # Try finding user by email - user MUST already exist in database
-            user = db.query(User).filter(User.email == supabase_user.email).first()
+            result = await db.execute(select(User).filter(User.email == supabase_user.email))
+            user = result.scalar_one_or_none()
             
             # Deny access if user doesn't exist in database
             if not user:
