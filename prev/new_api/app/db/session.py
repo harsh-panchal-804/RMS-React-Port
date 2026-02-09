@@ -6,6 +6,13 @@ load_dotenv(dotenv_path=".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+if not DATABASE_URL:
+    raise ValueError(
+        "DATABASE_URL environment variable is not set. "
+        "Please set it in your .env file or environment variables. "
+        "Example: DATABASE_URL=postgresql://user:password@localhost/dbname"
+    )
+
 engine = create_engine(
     DATABASE_URL,
     pool_pre_ping=True

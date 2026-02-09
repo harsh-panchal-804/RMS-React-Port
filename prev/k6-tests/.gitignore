@@ -1,0 +1,23 @@
+# k6 test results and logs
+*.log
+*.json
+results/
+
+# Environment files with sensitive data
+.env
+.env.local
+*.env
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary files
+*.tmp
+*.temp
