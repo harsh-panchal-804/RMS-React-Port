@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import and_, or_
+from sqlalchemy import and_, or_, cast, String
 from uuid import UUID
 from typing import List, Optional
 from datetime import datetime
@@ -146,6 +146,7 @@ admin_router = APIRouter(
 
 
 @admin_router.get("/")
+@run_with_sync_session()
 def list_all_requests_with_user_info(
     status: Optional[str] = None,
     user_id: Optional[UUID] = None,
@@ -192,7 +193,7 @@ def list_all_requests_with_user_info(
         )
 
     if status:
-        query = query.filter(AttendanceRequest.status == status)
+        query = query.filter(cast(AttendanceRequest.status, String) == status)
     
     if user_id:
         query = query.filter(AttendanceRequest.user_id == user_id)
@@ -230,6 +231,7 @@ def list_all_requests_with_user_info(
 
 
 @admin_router.get("/{request_id}", response_model=AttendanceRequestResponse)
+@run_with_sync_session()
 def admin_get_request(request_id: UUID, db: Session = Depends(get_db)):
     """Get a specific attendance request by ID"""
     req = db.query(AttendanceRequest).filter(

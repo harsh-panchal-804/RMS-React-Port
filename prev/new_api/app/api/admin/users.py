@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, Session
 # TODO: Convert remaining endpoints to async - for now using AsyncSession everywhere
@@ -222,7 +222,7 @@ def search_with_filters(
             func.coalesce(project_count_sq.c.project_count, 0).label(
                 "allocated_projects"
             ),
-            func.coalesce(attendance_sq.c.status, "UNKNOWN").label(
+            func.coalesce(cast(attendance_sq.c.status, String), "UNKNOWN").label(
                 "today_status"
             ),
         )
@@ -257,11 +257,10 @@ def search_with_filters(
 
     if status is not None:
         query = query.filter(
-            func.coalesce(attendance_sq.c.status, "UNKNOWN") == status
+            func.coalesce(cast(attendance_sq.c.status, String), "UNKNOWN") == status
         )
 
 
-    results = query.all()
     total = query.count()
     results = (
         query
