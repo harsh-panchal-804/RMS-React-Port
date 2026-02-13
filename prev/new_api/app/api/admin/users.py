@@ -17,12 +17,14 @@ from uuid import UUID
 from datetime import date
 from math import ceil
 import os
+import logging
 
 
 router = APIRouter(
     prefix="/admin/users",
     tags=["Admin Users"],
 )
+logger = logging.getLogger(__name__)
 
 @router.get("/", response_model=List[UserResponse])
 async def list_users(
@@ -84,11 +86,10 @@ async def list_users(
         
         return users
     except Exception as e:
-        import traceback
-        error_detail = f"Error fetching users: {str(e)}\n{traceback.format_exc()}"
+        logger.exception("Error fetching users in list_users")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=error_detail
+            detail="Error fetching users"
         )
 
 @router.get("/kpi_cards_info")

@@ -7,6 +7,10 @@ const AuthContext = createContext(null);
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 const REDIRECT_URL = import.meta.env.VITE_REDIRECT_URL; // Optional: override redirect URL
+const NGROK_BYPASS_HEADERS = {
+  // Prevent ngrok free-tier browser interstitial (ERR_NGROK_6024) on XHR/fetch calls.
+  'ngrok-skip-browser-warning': 'true',
+};
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);
@@ -24,6 +28,7 @@ export function AuthProvider({ children }) {
       
       const response = await axios.get(`${API_BASE_URL}/me`, {
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json',
         },
@@ -165,6 +170,7 @@ export function AuthProvider({ children }) {
           try {
             const response = await axios.get(`${API_BASE_URL}/me`, {
               headers: {
+                ...NGROK_BYPASS_HEADERS,
                 'Authorization': `Bearer ${storedToken}`,
                 'Content-Type': 'application/json',
               },

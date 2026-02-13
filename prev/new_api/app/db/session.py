@@ -18,6 +18,18 @@ if not DATABASE_URL:
 # Configure logger for connection pool monitoring
 logger = logging.getLogger(__name__)
 
+
+def _env_int(name: str, default: int) -> int:
+    """Read integer env vars safely with fallback defaults."""
+    raw_value = os.getenv(name)
+    if raw_value is None:
+        return default
+    try:
+        return int(raw_value)
+    except ValueError:
+        logger.warning("Invalid %s=%r; falling back to %d", name, raw_value, default)
+        return default
+
 # Convert postgresql:// to postgresql+asyncpg:// for asyncpg
 if DATABASE_URL.startswith("postgresql://"):
     DATABASE_URL = DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
@@ -28,15 +40,29 @@ elif DATABASE_URL.startswith("postgresql+psycopg2://"):
 elif "postgresql+asyncpg://" not in DATABASE_URL:
     logger.warning(f"⚠️ DATABASE_URL doesn't use asyncpg: {DATABASE_URL[:50]}...")
 
-# Main application engine with asyncpg - NO BLOCKING!
+# Keep defaults conservative to avoid saturating hosted Postgres connection limits.
+DB_POOL_SIZE = _env_int("DB_POOL_SIZE", 5)
+DB_MAX_OVERFLOW = _env_int("DB_MAX_OVERFLOW", 5)
+DB_POOL_TIMEOUT = _env_int("DB_POOL_TIMEOUT", 30)
+DB_POOL_RECYCLE = _env_int("DB_POOL_RECYCLE", 1800)
+
+# Main application engine with asyncpg
 engine = create_async_engine(
     DATABASE_URL,
     pool_pre_ping=True,  # Verify connections before using (prevents stale connections)
-    pool_size=30,  # Increased from 20 to handle more concurrent requests
-    max_overflow=50,  # Increased from 30 to handle spikes
-    pool_recycle=3600,  # Recycle connections after 1 hour (prevents connection leaks)
-    pool_timeout=30,  # Timeout when waiting for connection from pool (prevents infinite hangs)
+    pool_size=DB_POOL_SIZE,
+    max_overflow=DB_MAX_OVERFLOW,
+    pool_recycle=DB_POOL_RECYCLE,
+    pool_timeout=DB_POOL_TIMEOUT,  # Timeout when waiting for connection from pool
     echo=False,  # Set to True for SQL query logging (useful for debugging)
+)
+
+logger.info(
+    "DB pool configured: pool_size=%d max_overflow=%d pool_timeout=%ds pool_recycle=%ds",
+    DB_POOL_SIZE,
+    DB_MAX_OVERFLOW,
+    DB_POOL_TIMEOUT,
+    DB_POOL_RECYCLE,
 )
 
 # Connection pool monitoring events (async-compatible)

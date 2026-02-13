@@ -22,7 +22,7 @@ import NotFound from "./NotFound";
 import { Login } from "./Login";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import deccanLogo from "@/assets/o9v0brYfHVytUv8NJzPm2Tuymi0.webp";
+const deccanLogo="https://media.licdn.com/dms/image/v2/D560BAQEzBjCGyU-wsg/company-logo_200_200/company-logo_200_200/0/1730125488452/ai_deccan_logo?e=2147483647&v=beta&t=cc_gAknLXf7v4aW23hRw17JopzqOEsvGlYm2FOOrQb4"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -268,8 +268,8 @@ function SidebarLogo() {
       <img
         src={deccanLogo}
         alt="Deccan AI"
-        className="h-6 w-6 shrink-0 object-contain"
-        style={{ filter: 'brightness(0) invert(1)' }}
+        className="h-10 w-10 shrink-0 object-contain rounded-md transition-all duration-300 ease-in-out hover:scale-110 "
+        // style={{ filter: 'brightness(0) invert(1)' }}
       />
       {open && (
         <motion.span

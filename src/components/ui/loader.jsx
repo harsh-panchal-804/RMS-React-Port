@@ -89,29 +89,50 @@ export const LoaderTwo = () => {
 };
 
 export const LoaderThree = () => {
+  const outerPerimeterPath = `M977 1580 c-51 -13 -101 -48 -135 -96 -16 -22 -72 -79 -125 -128
+-118 -108 -127 -128 -127 -274 0 -244 71 -491 173 -600 65 -70 169 -96 223
+-56 45 33 61 62 110 189 58 153 69 171 208 340 64 77 126 160 138 184 31 65
+35 128 9 178 -28 55 -120 154 -180 192 -92 59 -218 89 -294 71z`;
   return (
     <motion.svg
       xmlns="http://www.w3.org/2000/svg"
-      width="24"
-      height="24"
-      viewBox="0 0 24 24"
+      width="34"
+      height="34"
+      viewBox="0 0 200 200"
       fill="none"
       stroke="currentColor"
-      strokeWidth="1"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-20 w-20 stroke-neutral-500 [--fill-final:var(--color-yellow-300)] [--fill-initial:var(--color-neutral-50)] dark:stroke-neutral-100 dark:[--fill-final:var(--color-yellow-500)] dark:[--fill-initial:var(--color-neutral-800)]">
-      <motion.path stroke="none" d="M0 0h24v24H0z" fill="none" />
-      <motion.path
-        initial={{ pathLength: 0, fill: "var(--fill-initial)" }}
-        animate={{ pathLength: 1, fill: "var(--fill-final)" }}
-        transition={{
-          duration: 2,
-          ease: "easeInOut",
-          repeat: Infinity,
-          repeatType: "reverse",
-        }}
-        d="M13 3l0 7l6 0l-8 11l0 -7l-6 0l8 -11" />
+      strokeWidth="2.5"
+      strokeLinecap="butt"
+      strokeLinejoin="miter"
+      className="h-34 w-34 stroke-neutral-500 [--fill-final:var(--color-yellow-300)] [--fill-initial:var(--color-neutral-50)] dark:stroke-neutral-100 dark:[--fill-final:var(--color-yellow-500)] dark:[--fill-initial:var(--color-neutral-800)]">
+      <g transform="translate(0,200) scale(0.1,-0.1)">
+        <motion.path
+          initial={{ fill: "var(--fill-initial)" }}
+          animate={{ fill: "var(--fill-final)" }}
+          transition={{
+            duration: 3,
+            ease: "easeInOut",
+            repeat: Infinity,
+            repeatType: "reverse",
+          }}
+          stroke="none"
+          vectorEffect="non-scaling-stroke"
+          d={outerPerimeterPath}
+        />
+        <motion.path
+          initial={{ pathLength: 0 }}
+          animate={{ pathLength: 1 }}
+          transition={{
+            duration: 5,
+            ease: "easeInOut",
+            repeat: Infinity,
+            repeatType: "reverse",
+          }}
+          fill="none"
+          vectorEffect="non-scaling-stroke"
+          d={outerPerimeterPath}
+        />
+      </g>
     </motion.svg>
   );
 };

@@ -1018,26 +1018,26 @@ const ProjectProductivityDashboard = () => {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="h-[400px] w-full overflow-auto">
+                  <ScrollArea className="h-[400px] w-full">
                     <Table>
-                        <TableHeader>
-                          <TableRow>
-                            <TableHead className="whitespace-nowrap">Date</TableHead>
-                            <TableHead className="whitespace-nowrap">Project</TableHead>
-                            <TableHead className="whitespace-nowrap">User</TableHead>
-                            <TableHead className="whitespace-nowrap">Email</TableHead>
-                            <TableHead className="whitespace-nowrap">Role</TableHead>
-                            <TableHead className="whitespace-nowrap">Hours</TableHead>
-                            <TableHead className="whitespace-nowrap">Tasks</TableHead>
-                            <TableHead className="whitespace-nowrap">Quality Rating</TableHead>
-                            <TableHead className="whitespace-nowrap">Quality Score</TableHead>
-                            <TableHead className="whitespace-nowrap">Accuracy</TableHead>
-                            <TableHead className="whitespace-nowrap">Critical Rate</TableHead>
-                            <TableHead className="whitespace-nowrap">Productivity</TableHead>
-                            <TableHead className="whitespace-nowrap">Active Users</TableHead>
-                          </TableRow>
-                        </TableHeader>
-                        <TableBody>
+                      <TableHeader>
+                        <TableRow>
+                          <TableHead>Date</TableHead>
+                          <TableHead>Project</TableHead>
+                          <TableHead>User</TableHead>
+                          <TableHead>Email</TableHead>
+                          <TableHead>Role</TableHead>
+                          <TableHead>Hours</TableHead>
+                          <TableHead>Tasks</TableHead>
+                          <TableHead>Quality Rating</TableHead>
+                          <TableHead>Quality Score</TableHead>
+                          <TableHead>Accuracy</TableHead>
+                          <TableHead>Critical Rate</TableHead>
+                          <TableHead>Productivity</TableHead>
+                          <TableHead>Active Users</TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
                         {processedData
                           .sort((a, b) => b.date - a.date)
                           .slice(0, 100)
@@ -1095,9 +1095,9 @@ const ProjectProductivityDashboard = () => {
                               <TableCell>{row.active_users}</TableCell>
                             </TableRow>
                           ))}
-                        </TableBody>
-                      </Table>
-                  </div>
+                      </TableBody>
+                    </Table>
+                  </ScrollArea>
                   <Alert className="mt-4">
                     <Info className="h-4 w-4" />
                     <AlertDescription className="text-xs">

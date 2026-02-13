@@ -1,6 +1,10 @@
 import axios from 'axios';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+const NGROK_BYPASS_HEADERS = {
+  // Prevent ngrok free-tier browser interstitial (ERR_NGROK_6024) on XHR/fetch calls.
+  'ngrok-skip-browser-warning': 'true',
+};
 
 if (!API_BASE_URL) {
   throw new Error(
@@ -39,6 +43,7 @@ export const authenticatedRequest = async (method, endpoint, params = null) => {
       method,
       url: fullUrl,
       headers: {
+        ...NGROK_BYPASS_HEADERS,
         'Authorization': `Bearer ${cleanToken}`,
         'Content-Type': 'application/json',
       },
@@ -1165,6 +1170,7 @@ export const bulkUploadQuality = async (file) => {
       formData,
       {
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,
           'Content-Type': 'multipart/form-data',
         },
@@ -1223,6 +1229,7 @@ export const bulkUploadProjects = async (file) => {
       formData,
       {
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,
           'Content-Type': 'multipart/form-data',
         },
@@ -1304,6 +1311,7 @@ export const getDailyRosterReport = async (params) => {
       {
         params,
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,
         },
         responseType: 'blob', // Get CSV as blob
@@ -1333,6 +1341,7 @@ export const getProjectHistoryReport = async (projectId) => {
       {
         params: { project_id: projectId },
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,
         },
         responseType: 'blob', // Get CSV as blob
@@ -1362,6 +1371,7 @@ export const getUserPerformanceReport = async (params) => {
       {
         params,
         headers: {
+          ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,
         },
         responseType: 'blob', // Get CSV as blob
