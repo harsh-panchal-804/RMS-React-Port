@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
 import time
+import os
 import pandas as pd
 from datetime import date, datetime
 from role_guard import get_user_role
+from utils.timezone import format_time_ist
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Timesheet Approvals", layout="wide")
@@ -13,7 +15,7 @@ role = get_user_role()
 if not role or role not in ["ADMIN", "MANAGER"]:
     st.error("Access denied. Admin or Manager role required.")
     st.stop()
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 # --- HELPER FUNCTIONS ---
 def authenticated_request(method, endpoint, data=None, params=None):
@@ -191,29 +193,17 @@ if filtered_items:
         
         # Handle datetime objects or strings
         if clock_in:
-            if isinstance(clock_in, datetime):
-                clock_in_str = clock_in.strftime("%I:%M %p")
-            elif isinstance(clock_in, str):
-                try:
-                    dt = datetime.fromisoformat(clock_in.replace("Z", "+00:00"))
-                    clock_in_str = dt.strftime("%I:%M %p")
-                except:
-                    clock_in_str = str(clock_in)
-            else:
+            try:
+                clock_in_str = format_time_ist(clock_in)
+            except Exception:
                 clock_in_str = str(clock_in)
         else:
             clock_in_str = "-"
         
         if clock_out:
-            if isinstance(clock_out, datetime):
-                clock_out_str = clock_out.strftime("%I:%M %p")
-            elif isinstance(clock_out, str):
-                try:
-                    dt = datetime.fromisoformat(clock_out.replace("Z", "+00:00"))
-                    clock_out_str = dt.strftime("%I:%M %p")
-                except:
-                    clock_out_str = str(clock_out)
-            else:
+            try:
+                clock_out_str = format_time_ist(clock_out)
+            except Exception:
                 clock_out_str = str(clock_out)
         else:
             clock_out_str = "-"

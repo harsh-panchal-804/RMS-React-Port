@@ -158,8 +158,13 @@ def login_ui():
         unsafe_allow_html=True
     )
 
-    st.markdown('<div class="login-title">Sign in</div>', unsafe_allow_html=True)
-    st.markdown('<div class="login-subtitle">Use your Google account to continue.</div>', unsafe_allow_html=True)
+    code = st.query_params.get("code")
+    if code or st.session_state.get("token"):
+        st.markdown('<div class="login-title">Signing you in...</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle">Please wait.</div>', unsafe_allow_html=True)
+    else:
+        st.markdown('<div class="login-title">Sign in</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle">Use your Google account to continue.</div>', unsafe_allow_html=True)
 
     # Show auth errors if any
     if st.session_state.get("_auth_error"):
@@ -188,7 +193,6 @@ def login_ui():
     from supabase_client import supabase
 
     # Handle OAuth callback with code
-    code = st.query_params.get("code")
     if code:
         try:
             res = supabase.auth.exchange_code_for_session({"auth_code": code})
@@ -220,27 +224,28 @@ def login_ui():
 
     redirect_to = os.getenv("SUPABASE_REDIRECT_URL", "http://localhost:8501")
 
-    try:
-        result = supabase.auth.sign_in_with_oauth({
-            "provider": "google",
-            "options": {"redirect_to": redirect_to},
-        })
+    if "_oauth_url" not in st.session_state:
+        try:
+            result = supabase.auth.sign_in_with_oauth({
+                "provider": "google",
+                "options": {"redirect_to": redirect_to},
+            })
 
-        url = None
-        if isinstance(result, dict):
-            url = result.get("url") or (result.get("data") or {}).get("url")
-        else:
-            url = getattr(result, "url", None)
-            if not url and hasattr(result, "data"):
-                url = getattr(result.data, "url", None)
+            url = None
+            if isinstance(result, dict):
+                url = result.get("url") or (result.get("data") or {}).get("url")
+            else:
+                url = getattr(result, "url", None)
+                if not url and hasattr(result, "data"):
+                    url = getattr(result.data, "url", None)
 
-        if url:
-            # Store URL in session state for the button to use
-            st.session_state["_oauth_url"] = url
-        else:
-            st.error("Could not generate login URL")
-    except Exception as e:
-        st.error(f"OAuth error: {e}")
+            if url:
+                # Store URL in session state for the button to use
+                st.session_state["_oauth_url"] = url
+            else:
+                st.error("Could not generate login URL")
+        except Exception as e:
+            st.error(f"OAuth error: {e}")
 
     # Show login button that redirects in same tab
     if st.button("Continue with Google", use_container_width=True, type="primary"):

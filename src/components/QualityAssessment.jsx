@@ -14,6 +14,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
@@ -391,34 +399,58 @@ const QualityAssessment = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Select User</Label>
-                      <Select value={selectedUserId} onValueChange={setSelectedUserId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select User" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {userOptions.map(user => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.displayName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Combobox
+                        items={userOptions.map((user) => user.displayName)}
+                        value={
+                          selectedUserId
+                            ? (userOptions.find((u) => u.id === selectedUserId)?.displayName || '')
+                            : ''
+                        }
+                        onValueChange={(display) => {
+                          const matched = userOptions.find((u) => u.displayName === display);
+                          setSelectedUserId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select user" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No user found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
                     </div>
 
                     <div className="space-y-2">
                       <Label>Select Project</Label>
-                      <Select value={selectedProjectId} onValueChange={setSelectedProjectId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select Project" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {projects.map(project => (
-                            <SelectItem key={project.id} value={project.id}>
-                              {project.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Combobox
+                        items={projects.map((project) => project.name)}
+                        value={
+                          selectedProjectId
+                            ? (projects.find((p) => p.id === selectedProjectId)?.name || '')
+                            : ''
+                        }
+                        onValueChange={(name) => {
+                          const matched = projects.find((project) => project.name === name);
+                          setSelectedProjectId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select project" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No project found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
                     </div>
 
                     <div className="space-y-2">

@@ -9,6 +9,7 @@ import os
 from dotenv import load_dotenv
 from typing import Dict, Optional, List
 from role_guard import get_user_role
+from utils.timezone import today_ist, now_ist
 
 load_dotenv()
 
@@ -102,9 +103,9 @@ def fetch_project_productivity_data(start_date: Optional[date] = None, end_date:
     else:
         # Fetch last 90 days by default to avoid loading too much data
         if not start_date:
-            start_date = date.today() - timedelta(days=90)
+            start_date = today_ist() - timedelta(days=90)
         if not end_date:
-            end_date = date.today()
+            end_date = today_ist()
         params["start_date"] = str(start_date)
         params["end_date"] = str(end_date)
     
@@ -295,7 +296,7 @@ def generate_mock_project_data():
     roles = ["Manager", "Developer", "Designer", "QA", "Developer"]
     
     data = []
-    base_date = datetime.now() - timedelta(days=60)
+    base_date = now_ist() - timedelta(days=60)
     
     for i in range(60):
         current_date = base_date + timedelta(days=i)
@@ -393,7 +394,7 @@ filter_col1, filter_col2, filter_col3 = st.columns(3)
 with filter_col1:
     data_min_date = df["date"].min().date()
     data_max_date = df["date"].max().date()
-    today = date.today()
+    today = today_ist()
     
     # Allow selecting dates up to 1 year before the earliest data, or at least 1 year ago
     # This allows users to select dates even if we haven't loaded that data yet

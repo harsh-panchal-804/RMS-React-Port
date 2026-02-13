@@ -12,6 +12,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -44,8 +52,10 @@ import {
 } from 'lucide-react';
 import { LoaderThree } from '@/components/ui/loader';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { useAuth } from '@/contexts/AuthContext';
 
 const UserProductivityDashboard = () => {
+  const { user } = useAuth();
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -83,6 +93,17 @@ const UserProductivityDashboard = () => {
       setTokenInput(existingToken);
     }
   }, []);
+
+  if (!user || user.role !== 'ADMIN') {
+    return (
+      <div className="min-h-screen w-full bg-background p-6">
+        <Alert>
+          <Info className="h-4 w-4" />
+          <AlertDescription>Access denied. Admin role required.</AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
 
   // Fetch data when token is set (also loads mappings)
   useEffect(() => {
@@ -230,8 +251,12 @@ const UserProductivityDashboard = () => {
     }));
 
     // Apply view mode filter
-    if (viewMode === 'Specific User' && selectedUser) {
-      filtered = filtered.filter((row) => row.user === selectedUser);
+    if (viewMode === 'Specific User') {
+      if (selectedUser) {
+        filtered = filtered.filter((row) => row.user === selectedUser);
+      } else {
+        filtered = [];
+      }
     }
 
     // Apply soul ID search (only for All Users mode)
@@ -295,6 +320,23 @@ const UserProductivityDashboard = () => {
     return [...new Set(data.map((row) => row.role))].sort();
   }, [data]);
 
+  // Keep date range valid (Streamlit parity: "to" cannot be before "from")
+  useEffect(() => {
+    if (startDate && endDate && startDate > endDate) {
+      setEndDate(startDate);
+    }
+  }, [startDate, endDate]);
+
+  // In specific user mode, always keep a selected user
+  useEffect(() => {
+    if (viewMode !== 'Specific User') return;
+    if (!uniqueUsers.length) return;
+    const validUsers = uniqueUsers.map((u) => u.userName);
+    if (!selectedUser || !validUsers.includes(selectedUser)) {
+      setSelectedUser(validUsers[0]);
+    }
+  }, [viewMode, selectedUser, uniqueUsers]);
+
   // Calculate KPIs
   const kpis = useMemo(() => {
     const totalHours = processedData.reduce((sum, row) => sum + (row.hours_worked || 0), 0);
@@ -310,7 +352,7 @@ const UserProductivityDashboard = () => {
 
     // Active users (only for All Users mode)
     const uniqueUsersCount = viewMode === 'All Users' 
-      ? [...new Set(processedData.map((row) => row.user_id))].length 
+      ? [...new Set(processedData.map((row) => row.user_id || row.user).filter(Boolean))].length 
       : 0;
 
     // Average quality score (only for Specific User mode)
@@ -1084,18 +1126,32 @@ const UserProductivityDashboard = () => {
               {viewMode === 'Specific User' && (
                 <div className="flex items-center gap-4">
                   <Label>Select User:</Label>
-                  <Select value={selectedUser || ''} onValueChange={setSelectedUser}>
-                    <SelectTrigger className="w-[300px]">
-                      <SelectValue placeholder="Select User" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {uniqueUsers.map((user) => (
-                        <SelectItem key={user.userName} value={user.userName}>
-                          {user.displayName}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <div className="w-[360px]">
+                    <Combobox
+                      items={uniqueUsers.map((user) => user.displayName)}
+                      value={
+                        selectedUser
+                          ? uniqueUsers.find((u) => u.userName === selectedUser)?.displayName || ''
+                          : ''
+                      }
+                      onValueChange={(displayValue) => {
+                        const matched = uniqueUsers.find((u) => u.displayName === displayValue);
+                        setSelectedUser(matched?.userName || '');
+                      }}
+                    >
+                      <ComboboxInput placeholder="Select user" className="w-full" />
+                      <ComboboxContent>
+                        <ComboboxEmpty>No user found.</ComboboxEmpty>
+                        <ComboboxList>
+                          {(item) => (
+                            <ComboboxItem key={item} value={item}>
+                              {item}
+                            </ComboboxItem>
+                          )}
+                        </ComboboxList>
+                      </ComboboxContent>
+                    </Combobox>
+                  </div>
                 </div>
               )}
 

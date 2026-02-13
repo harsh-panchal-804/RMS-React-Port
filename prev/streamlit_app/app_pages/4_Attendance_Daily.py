@@ -1,5 +1,6 @@
 import streamlit as st
 import requests
+import os
 from datetime import date, datetime
 # Role guard imported later after page config
 
@@ -31,8 +32,8 @@ def calculate_hours_worked(clock_in, clock_out, minutes_worked):
 
     # Fallback: compute from timestamps
     try:
-        ci = datetime.fromisoformat(clock_in.replace("Z", ""))
-        co = datetime.fromisoformat(clock_out.replace("Z", ""))
+        ci = parse_to_ist(clock_in)
+        co = parse_to_ist(clock_out)
         total_seconds = int((co - ci).total_seconds())
         return format_duration_hhmmss(total_seconds)
     except Exception:
@@ -46,12 +47,13 @@ st.set_page_config(page_title="Attendance Daily", layout="wide")
 
 # Basic role check
 from role_guard import get_user_role
+from utils.timezone import today_ist, parse_to_ist, IST
 role = get_user_role()
 if not role or role not in ["USER", "ADMIN", "MANAGER"]:
     st.error("Access denied. Please log in.")
     st.stop()
 
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 # ---------------------------------------------------------
 # HELPER: SPLIT ISO DATETIME INTO DATE + TIME
@@ -60,7 +62,7 @@ def split_datetime(ts):
     if not ts:
         return "-", "-"
     try:
-        dt = datetime.fromisoformat(ts.replace("Z", ""))
+        dt = parse_to_ist(ts)
         return dt.date().isoformat(), dt.strftime("%I:%M %p")
     except Exception:
         return "-", "-"
@@ -72,8 +74,8 @@ def sort_by_latest_clock_out(records):
     def sort_key(r):
         ts = r.get("last_clock_out_at")
         if not ts:
-            return datetime.min
-        return datetime.fromisoformat(ts.replace("Z", ""))
+            return datetime.min.replace(tzinfo=IST)
+        return parse_to_ist(ts)
 
     return sorted(records, key=sort_key, reverse=True)
 
@@ -141,8 +143,8 @@ col1, col2 = st.columns(2)
 with col1:
     selected_date = st.date_input(
     "Select Date",
-    value=date.today(),
-    max_value=date.today()
+    value=today_ist(),
+    max_value=today_ist()
 )
 
 

@@ -4,10 +4,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import {
   getAllProjects,
+  getAllUsers,
   getUsersWithFilter,
   getProjectMetrics,
   getProjectAllocation,
-  authenticatedRequest,
   getUserNameMapping,
 } from '../utils/api';
 import { Button } from '@/components/ui/button';
@@ -16,6 +16,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Label } from '@/components/ui/label';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
@@ -57,6 +65,24 @@ const WORK_ROLE_OPTIONS = [
   'RPM',
 ];
 
+const LEAVE_STATUSES = new Set(['LEAVE', 'ON_LEAVE', 'HALF_DAY_LEAVE']);
+
+const normalizeRole = (role) => {
+  if (role && typeof role === 'object') {
+    if (role.value) return String(role.value).toUpperCase();
+    if (role.name) return String(role.name).toUpperCase();
+  }
+  return String(role || '').toUpperCase();
+};
+
+const normalizeWeekoffValue = (value) => {
+  if (typeof value === 'string') return value.toUpperCase().trim();
+  if (value && typeof value === 'object') {
+    return String(value.value || value.name || '').toUpperCase().trim();
+  }
+  return '';
+};
+
 const ProjectResourceAllocation = () => {
   const { user, token } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -68,6 +94,7 @@ const ProjectResourceAllocation = () => {
   // Data states
   const [allProjects, setAllProjects] = useState([]);
   const [usersData, setUsersData] = useState([]);
+  const [allUsersData, setAllUsersData] = useState([]);
   const [projectMetrics, setProjectMetrics] = useState({});
   const [projectAllocations, setProjectAllocations] = useState({});
   const [userNameMapping, setUserNameMapping] = useState({});
@@ -97,22 +124,43 @@ const ProjectResourceAllocation = () => {
       const dateStr = format(selectedDate, 'yyyy-MM-dd');
       
       // Fetch in parallel
-      const [projects, users, nameMapping] = await Promise.all([
+      const [projects, usersWithFilter, allUsers, nameMapping] = await Promise.all([
         getAllProjects(),
         getUsersWithFilter(dateStr),
+        getAllUsers({ limit: 1000 }),
         getUserNameMapping(),
       ]);
+
+      const fallbackUsers = Array.isArray(allUsers) ? allUsers : [];
+      let users = Array.isArray(usersWithFilter) ? usersWithFilter : [];
+      if (users.length === 0 && fallbackUsers.length > 0) {
+        users = fallbackUsers.map((u) => ({
+          ...u,
+          allocated_projects: u.allocated_projects || 0,
+          is_not_allocated: Boolean(u.is_not_allocated),
+          today_status: u.today_status || 'ABSENT',
+        }));
+      }
       
       setAllProjects(projects);
       setUsersData(users);
+      setAllUsersData(fallbackUsers);
       setUserNameMapping(nameMapping);
       
       // Fetch metrics and allocations for each project
       const metricsPromises = projects.map(async (project) => {
-        const [metrics, allocation] = await Promise.all([
-          getProjectMetrics(project.id, dateStr, dateStr),
-          getProjectAllocation(project.id, dateStr, true),
-        ]);
+        const metrics = await getProjectMetrics(project.id, dateStr, dateStr);
+        let allocation = await getProjectAllocation(project.id, dateStr, true);
+        const hasActiveAllocation =
+          allocation &&
+          ((Array.isArray(allocation.resources) && allocation.resources.length > 0) ||
+            Number(allocation.total_resources || 0) > 0);
+        if (!hasActiveAllocation) {
+          const allocationWithInactive = await getProjectAllocation(project.id, dateStr, false);
+          if (allocationWithInactive) {
+            allocation = allocationWithInactive;
+          }
+        }
         return { projectId: project.id, metrics, allocation };
       });
       
@@ -146,49 +194,97 @@ const ProjectResourceAllocation = () => {
     toast.success('Data refreshed successfully');
   };
 
-  // Calculate user statistics
-  const userStats = useMemo(() => {
-    if (!usersData.length) {
-      return {
-        total: 0,
-        present: 0,
-        absent: 0,
-        leave: 0,
-        allocated: 0,
-        notAllocated: 0,
-        weekoff: 0,
-      };
+  // Streamlit-parity user KPI logic
+  const userKpiData = useMemo(() => {
+    const validUsers = Array.isArray(usersData)
+      ? usersData.filter((u) => u && typeof u === 'object')
+      : [];
+    const todayWeekday = format(selectedDate, 'EEEE').toUpperCase();
+
+    let userRoleUsers = validUsers.filter((u) => normalizeRole(u.role) === 'USER');
+    // Streamlit fallback: if no USER role found, use all users
+    if (validUsers.length > 0 && userRoleUsers.length === 0) {
+      userRoleUsers = validUsers;
     }
 
-    const todayWeekday = format(selectedDate, 'EEEE').toUpperCase();
-    const present = usersData.filter(u => u.today_status === 'PRESENT').length;
-    const leave = usersData.filter(u => u.today_status === 'LEAVE').length;
-    const absent = usersData.filter(u => 
-      !u.today_status || 
-      (u.today_status !== 'PRESENT' && u.today_status !== 'LEAVE' && u.today_status !== 'WEEKOFF')
-    ).length;
-    const allocated = usersData.filter(u => (u.allocated_projects || 0) > 0).length;
-    const notAllocated = usersData.filter(u => (u.allocated_projects || 0) === 0).length;
-    
-    // Calculate weekoff (users with weekoff today)
-    const weekoff = usersData.filter(u => {
-      const weekoffs = u.weekoffs || [];
-      return weekoffs.some(w => {
-        const day = typeof w === 'string' ? w.toUpperCase() : (w.value || w.name || '').toUpperCase();
-        return day === todayWeekday && u.today_status !== 'PRESENT';
-      });
-    }).length;
+    const weekoffMap = new Map();
+    (allUsersData || []).forEach((u) => {
+      const userId = String(u?.id || '').trim();
+      if (!userId) return;
+      const normalizedWeekoffs = (u?.weekoffs || [])
+        .map(normalizeWeekoffValue)
+        .filter(Boolean);
+      if (normalizedWeekoffs.length === 0) return;
+      weekoffMap.set(userId, normalizedWeekoffs);
+      weekoffMap.set(userId.toLowerCase(), normalizedWeekoffs);
+      weekoffMap.set(userId.toUpperCase(), normalizedWeekoffs);
+      weekoffMap.set(userId.replace(/-/g, ''), normalizedWeekoffs);
+      weekoffMap.set(userId.replace(/-/g, '').toLowerCase(), normalizedWeekoffs);
+    });
+
+    const resolveWeekoffs = (u) => {
+      const userId = String(u?.id || u?.user_id || '').trim();
+      if (!userId) return [];
+      return (
+        weekoffMap.get(userId) ||
+        weekoffMap.get(userId.toLowerCase()) ||
+        weekoffMap.get(userId.toUpperCase()) ||
+        weekoffMap.get(userId.replace(/-/g, '')) ||
+        weekoffMap.get(userId.replace(/-/g, '').toLowerCase()) ||
+        (u?.weekoffs || []).map(normalizeWeekoffValue).filter(Boolean)
+      );
+    };
+
+    const presentUsers = [];
+    const absentUsers = [];
+    const leaveUsers = [];
+    const weekoffUsers = [];
+
+    userRoleUsers.forEach((u) => {
+      const status = String(u?.today_status || '').toUpperCase();
+      const isWeekoffToday = resolveWeekoffs(u).includes(todayWeekday);
+
+      if (status === 'PRESENT') {
+        presentUsers.push(u);
+        return;
+      }
+      if (isWeekoffToday && !LEAVE_STATUSES.has(status)) {
+        weekoffUsers.push({ ...u, today_status: 'WEEKOFF' });
+        return;
+      }
+      if (LEAVE_STATUSES.has(status)) {
+        leaveUsers.push(u);
+        return;
+      }
+      // Streamlit counts WFH and unknown statuses as Absent
+      absentUsers.push(u);
+    });
+
+    const allocatedUsers = userRoleUsers.filter((u) => !Boolean(u?.is_not_allocated));
+    const notAllocatedUsers = userRoleUsers.filter((u) => Boolean(u?.is_not_allocated));
 
     return {
-      total: usersData.length,
-      present,
-      absent,
-      leave,
-      allocated,
-      notAllocated,
-      weekoff,
+      userRoleUsers,
+      presentUsers,
+      absentUsers,
+      leaveUsers,
+      weekoffUsers,
+      allocatedUsers,
+      notAllocatedUsers,
     };
-  }, [usersData, selectedDate]);
+  }, [usersData, allUsersData, selectedDate]);
+
+  const userStats = useMemo(() => {
+    return {
+      total: userKpiData.userRoleUsers.length,
+      present: userKpiData.presentUsers.length,
+      absent: userKpiData.absentUsers.length,
+      leave: userKpiData.leaveUsers.length,
+      allocated: userKpiData.allocatedUsers.length,
+      notAllocated: userKpiData.notAllocatedUsers.length,
+      weekoff: userKpiData.weekoffUsers.length,
+    };
+  }, [userKpiData]);
 
   // Calculate overall statistics
   const overallStats = useMemo(() => {
@@ -294,21 +390,12 @@ const ProjectResourceAllocation = () => {
   };
 
   // Filter functions for user lists
-  const getPresentUsers = () => usersData.filter(u => u.today_status === 'PRESENT');
-  const getAbsentUsers = () => usersData.filter(u => !u.today_status || (u.today_status !== 'PRESENT' && u.today_status !== 'LEAVE' && u.today_status !== 'WEEKOFF'));
-  const getLeaveUsers = () => usersData.filter(u => u.today_status === 'LEAVE');
-  const getAllocatedUsers = () => usersData.filter(u => (u.allocated_projects || 0) > 0);
-  const getNotAllocatedUsers = () => usersData.filter(u => (u.allocated_projects || 0) === 0);
-  const getWeekoffUsers = () => {
-    const todayWeekday = format(selectedDate, 'EEEE').toUpperCase();
-    return usersData.filter(u => {
-      const weekoffs = u.weekoffs || [];
-      return weekoffs.some(w => {
-        const day = typeof w === 'string' ? w.toUpperCase() : (w.value || w.name || '').toUpperCase();
-        return day === todayWeekday && u.today_status !== 'PRESENT';
-      });
-    });
-  };
+  const getPresentUsers = () => userKpiData.presentUsers;
+  const getAbsentUsers = () => userKpiData.absentUsers;
+  const getLeaveUsers = () => userKpiData.leaveUsers;
+  const getAllocatedUsers = () => userKpiData.allocatedUsers;
+  const getNotAllocatedUsers = () => userKpiData.notAllocatedUsers;
+  const getWeekoffUsers = () => userKpiData.weekoffUsers;
 
   // Get user projects mapping
   const getUserProjectsMapping = useMemo(() => {
@@ -367,7 +454,7 @@ const ProjectResourceAllocation = () => {
     setUserListData(enhancedData);
     setUserListType(type);
     setUserListTitle({
-      total: 'All Users (Role: USER or ADMIN)',
+      total: 'All Users (Role: USER)',
       present: 'Present Users',
       absent: 'Absent Users',
       leave: 'Leave Users',
@@ -386,8 +473,8 @@ const ProjectResourceAllocation = () => {
         title: 'Total Users',
         value: userStats.total.toString(),
         icon: <Users className="h-4 w-4" />,
-        description: 'All users with role USER or ADMIN',
-        onClick: () => handleUserListClick('total', usersData),
+        description: 'All users with role USER',
+        onClick: () => handleUserListClick('total', userKpiData.userRoleUsers),
       },
       {
         id: 'present',
@@ -438,7 +525,7 @@ const ProjectResourceAllocation = () => {
         onClick: () => handleUserListClick('weekoff', getWeekoffUsers()),
       },
     ];
-  }, [userStats, usersData, selectedDate, handleUserListClick, getUserProjectsMapping]);
+  }, [userStats, userKpiData, handleUserListClick, getUserProjectsMapping]);
 
   // Handle project card click
   const handleProjectClick = (type, projectData) => {
@@ -467,9 +554,16 @@ const ProjectResourceAllocation = () => {
       let totalUsers = 0;
       if (allocation?.resources) {
         const resources = aggregateByUser(allocation.resources);
-        totalUsers = resources.filter(r => 
-          ['USER', 'ADMIN'].includes((r.designation || '').toUpperCase())
-        ).length;
+        const userOnlyResources = resources.filter(
+          (r) => String(r.designation || '').toUpperCase() === 'USER'
+        );
+        if (userOnlyResources.length > 0) {
+          totalUsers = userOnlyResources.length;
+        } else if (resources.length > 0) {
+          totalUsers = resources.length;
+        } else {
+          totalUsers = Number(allocation.total_resources || 0);
+        }
       }
 
       return {
@@ -636,7 +730,7 @@ const ProjectResourceAllocation = () => {
               User Overview
             </h2>
             <p className="text-sm text-muted-foreground mb-4">
-              Dashboard showing Total users count with role 'USER' or 'ADMIN', Count of present, absent, leave, allocated, not allocated, and weekoff
+              Dashboard showing Total users count with role 'USER', plus counts of present, absent, leave, allocated, not allocated, and weekoff
             </p>
             
             {loading ? (
@@ -1122,10 +1216,11 @@ const ProjectResourceAllocation = () => {
                         });
                     } else if (projectDialogType === 'users' && projectDialogData.allocation?.resources) {
                       const resources = aggregateByUser(projectDialogData.allocation.resources);
-                      const userAdminResources = resources.filter(r => 
-                        ['USER', 'ADMIN'].includes((r.designation || '').toUpperCase())
+                      const userOnlyResources = resources.filter(
+                        (r) => String(r.designation || '').toUpperCase() === 'USER'
                       );
-                      userAdminResources.forEach(r => {
+                      const resourcesForDisplay = userOnlyResources.length > 0 ? userOnlyResources : resources;
+                      resourcesForDisplay.forEach(r => {
                         const userMetrics = (projectDialogData.metrics || []).filter(m => String(m.user_id) === String(r.user_id));
                         const totalHours = userMetrics.reduce((sum, m) => sum + (m.hours_worked || 0), 0);
                         const totalTasks = userMetrics.reduce((sum, m) => sum + (m.tasks_completed || 0), 0);
@@ -1271,22 +1366,28 @@ const DetailedProjectView = ({
       </h2>
       
       {/* Filters */}
+      {/** Project + other filters */}
+      {/** Project filter moved to searchable combobox */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <div className="space-y-2">
           <Label htmlFor="project-select" className="text-sm font-medium">Project</Label>
-          <Select value={selectedProject} onValueChange={setSelectedProject}>
-            <SelectTrigger id="project-select">
-              <SelectValue placeholder="Select Project" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="All">All</SelectItem>
-              {projects.map(project => (
-                <SelectItem key={project.id} value={project.name}>
-                  {project.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <Combobox
+            items={['All', ...projects.map((project) => project.name).filter(Boolean)]}
+            value={selectedProject}
+            onValueChange={setSelectedProject}
+          >
+            <ComboboxInput placeholder="Select project" className="w-full" />
+            <ComboboxContent>
+              <ComboboxEmpty>No project found.</ComboboxEmpty>
+              <ComboboxList>
+                {(item) => (
+                  <ComboboxItem key={item} value={item}>
+                    {item}
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
         </div>
 
         <div className="space-y-2">
@@ -1610,11 +1711,12 @@ const ProjectDialogContent = ({ type, data, userNameMapping, selectedDate, aggre
     }
 
     const resources = aggregateByUser(allocation.resources);
-    const userAdminResources = resources.filter(r => 
-      ['USER', 'ADMIN'].includes((r.designation || '').toUpperCase())
+    const userOnlyResources = resources.filter(
+      (r) => String(r.designation || '').toUpperCase() === 'USER'
     );
+    const resourcesForDisplay = userOnlyResources.length > 0 ? userOnlyResources : resources;
 
-    const userList = userAdminResources.map(r => {
+    const userList = resourcesForDisplay.map(r => {
       const userMetrics = (metrics || []).filter(m => String(m.user_id) === String(r.user_id));
       const totalHours = userMetrics.reduce((sum, m) => sum + (m.hours_worked || 0), 0);
       const totalTasks = userMetrics.reduce((sum, m) => sum + (m.tasks_completed || 0), 0);

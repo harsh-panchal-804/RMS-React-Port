@@ -14,6 +14,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -235,6 +243,22 @@ const ProjectProductivityDashboard = () => {
     return [...new Set(data.map((row) => row.role))].sort();
   }, [data]);
 
+  // Keep date range valid (Streamlit parity: "to" cannot be before "from")
+  useEffect(() => {
+    if (startDate && endDate && startDate > endDate) {
+      setEndDate(startDate);
+    }
+  }, [startDate, endDate]);
+
+  // In specific project mode, always keep a selected project
+  useEffect(() => {
+    if (viewMode !== 'Specific Project') return;
+    if (!uniqueProjects.length) return;
+    if (!selectedProject || !uniqueProjects.includes(selectedProject)) {
+      setSelectedProject(uniqueProjects[0]);
+    }
+  }, [viewMode, selectedProject, uniqueProjects]);
+
   // Calculate KPIs
   const kpis = useMemo(() => {
     const totalHours = processedData.reduce((sum, row) => sum + (row.hours_worked || 0), 0);
@@ -249,8 +273,10 @@ const ProjectProductivityDashboard = () => {
       dates.length > 0
         ? dates.reduce((sum, date) => {
             const rowsForDate = processedData.filter((row) => row.date.getTime() === date);
-            const uniqueUsers = new Set(rowsForDate.map((row) => row.user_id));
-            return sum + uniqueUsers.size;
+            if (rowsForDate.length === 0) return sum;
+            const dailyMeanActiveUsers =
+              rowsForDate.reduce((innerSum, row) => innerSum + (row.active_users || 0), 0) / rowsForDate.length;
+            return sum + dailyMeanActiveUsers;
           }, 0) / dates.length
         : 0;
 
@@ -274,7 +300,10 @@ const ProjectProductivityDashboard = () => {
         ? criticalData.reduce((sum, row) => sum + (row.critical_rate || 0), 0) / criticalData.length
         : null;
 
-    const numProjects = viewMode === 'All Projects' ? uniqueProjects.length : 1;
+    const numProjects =
+      viewMode === 'All Projects'
+        ? new Set(processedData.map((row) => row.project).filter(Boolean)).size
+        : 1;
 
     return {
       totalHours,
@@ -286,7 +315,7 @@ const ProjectProductivityDashboard = () => {
       avgAccuracy,
       avgCritical,
     };
-  }, [processedData, viewMode, uniqueProjects.length]);
+  }, [processedData, viewMode]);
 
   // Transform KPIs into HoverEffect items format
   const kpiItems = useMemo(() => {
@@ -703,18 +732,21 @@ const ProjectProductivityDashboard = () => {
                 </SelectContent>
               </Select>
               {viewMode === 'Specific Project' && (
-                <Select value={selectedProject || ''} onValueChange={setSelectedProject}>
-                  <SelectTrigger className="w-[200px]">
-                    <SelectValue placeholder="Select Project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {uniqueProjects.map((project) => (
-                      <SelectItem key={project} value={project}>
-                        {project}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <div className="w-[280px]">
+                  <Combobox items={uniqueProjects} value={selectedProject || ''} onValueChange={setSelectedProject}>
+                    <ComboboxInput placeholder="Select project" className="w-full" />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No project found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(item) => (
+                          <ComboboxItem key={item} value={item}>
+                            {item}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                </div>
               )}
             </div>
 

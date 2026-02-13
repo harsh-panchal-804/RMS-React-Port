@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from datetime import datetime, date, time as dt_time
 from role_guard import setup_role_access
+from utils.timezone import today_ist, now_ist
 
 # -----------------------------
 # PAGE CONFIG
@@ -57,7 +58,7 @@ def secs_to_hhmmss(s: int) -> str:
     return f"{h:02d}h {m:02d}m {sec:02d}s"
 
 def now_local():
-    return datetime.now()
+    return now_ist()
 
 def calc_days(start_d: date, end_d: date) -> int:
     return (end_d - start_d).days + 1
@@ -83,7 +84,7 @@ def clock_out():
     st.session_state.attendance_logs.insert(0, {
         "user": st.session_state.user_name,
         "project": st.session_state.user_project,
-        "date": str(date.today()),
+        "date": str(today_ist()),
         "mode": clk["mode"],
         "clock_in": fmt_time_only(clk["clock_in_time"]),
         "clock_out": fmt_time_only(out_time),
@@ -284,9 +285,9 @@ if st.session_state.role == "User":
                 if leave_type == "Full Day":
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        start_d = st.date_input("From Date", value=date.today(), min_value=date.today(), key="start_date")
+                        start_d = st.date_input("From Date", value=today_ist(), min_value=today_ist(), key="start_date")
                     with col_b:
-                        end_d = st.date_input("To Date", value=date.today(), min_value=date.today(), key="end_date")
+                        end_d = st.date_input("To Date", value=today_ist(), min_value=today_ist(), key="end_date")
                     
                     days = calc_days(start_d, end_d)
                     if days > 2:
@@ -296,7 +297,7 @@ if st.session_state.role == "User":
                     
                     half_day_type = None
                 else:
-                    start_d = st.date_input("Date", value=date.today(), min_value=date.today(), key="half_day_date")
+                    start_d = st.date_input("Date", value=today_ist(), min_value=today_ist(), key="half_day_date")
                     end_d = start_d
                     half_day_type = st.radio("Half Day Type", ["First Half", "Second Half"], horizontal=True, key="half_day_type_radio")
                     st.info("ℹ️ 0.5 day - Paid Leave")

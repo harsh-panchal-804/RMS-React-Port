@@ -4,13 +4,15 @@ from datetime import date, datetime, timedelta
 from typing import Optional, Dict, List
 import requests
 import time
+import os
 from uuid import UUID
+from utils.timezone import today_ist
 
 # Page config
 st.set_page_config(page_title="Quality Assessment", layout="wide")
 
 # API configuration
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 
 # =====================================================================
 # AUTH CHECK & ROLE GUARD
@@ -142,7 +144,7 @@ if mode == "Individual Assessment":
     
     with col3:
         # Date selection
-        selected_date = st.date_input("Assessment Date", value=date.today())
+        selected_date = st.date_input("Assessment Date", value=today_ist())
     
     # Quality rating
     col4, col5 = st.columns(2)

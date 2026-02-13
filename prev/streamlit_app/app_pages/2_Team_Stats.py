@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timedelta, date
 from dotenv import load_dotenv
 from role_guard import get_user_role
+from utils.timezone import today_ist
 import plotly.express as px
 import plotly.graph_objects as go
 import time
@@ -375,7 +376,7 @@ st.info("ℹ️ **Real-time Updates:** Data refreshes every 10 seconds automatic
 # --- DATE SELECTOR AND REFRESH BUTTON ---
 col_date, col_refresh = st.columns([3, 1])
 with col_date:
-    selected_date = st.date_input("Select Date", value=date.today(), max_value=date.today(), key="team_stats_date")
+    selected_date = st.date_input("Select Date", value=today_ist(), max_value=today_ist(), key="team_stats_date")
 with col_refresh:
     st.write("")  # Spacing
     if st.button("🔄 Refresh Data", use_container_width=True, help="Clear cache and reload all data to see latest updates"):

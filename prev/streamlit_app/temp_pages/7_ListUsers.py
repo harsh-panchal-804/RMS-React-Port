@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import requests
+import os
 from requests.exceptions import ConnectionError, Timeout, HTTPError
 import math
 from role_guard import setup_role_access
 
-API_BASE_URL = "http://localhost:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://localhost:8000")
 PAGE_SIZE = 10
 
 # --- HELPER FUNCTIONS ---

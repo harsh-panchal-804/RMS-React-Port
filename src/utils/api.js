@@ -28,15 +28,13 @@ export const authenticatedRequest = async (method, endpoint, params = null) => {
   if (!token) {
     throw new Error('No authentication token found. Please set your token first.');
   }
+  const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
 
   const fullUrl = `${API_BASE_URL}${endpoint}`;
   console.log(`🌐 API Call: ${method} ${fullUrl}`, params ? { params } : '');
   console.log(`🔑 Using token: ${token.substring(0, 20)}...`);
 
   try {
-    // Clean token - remove "Bearer " prefix if present
-    const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-    
     // Supabase typically expects Bearer token in Authorization header
     // The backend's get_current_user dependency likely extracts the token from Authorization header
     const config = {
@@ -1299,6 +1297,49 @@ export const removeProjectMember = async (projectId, userId) => {
  * Get daily roster report (role drilldown)
  */
 export const getDailyRosterReport = async (params) => {
+  const fetchRosterBlob = async (requestParams, cleanToken) => {
+    const response = await axios.get(
+      `${API_BASE_URL}/reports/role-drilldown`,
+      {
+        params: requestParams,
+        headers: {
+          ...NGROK_BYPASS_HEADERS,
+          'Authorization': `Bearer ${cleanToken}`,
+        },
+        responseType: 'blob',
+      }
+    );
+    return response.data;
+  };
+
+  const isMissingReportDateError = async (error) => {
+    if (error?.response?.status !== 422) return false;
+    const payload = error.response?.data;
+    if (!payload) return false;
+
+    if (typeof payload === 'object' && Array.isArray(payload.detail)) {
+      return payload.detail.some((item) => {
+        const loc = Array.isArray(item?.loc) ? item.loc : [];
+        return loc.includes('report_date');
+      });
+    }
+
+    if (payload instanceof Blob) {
+      try {
+        const text = await payload.text();
+        return text.includes('report_date');
+      } catch {
+        return false;
+      }
+    }
+
+    if (typeof payload === 'string') {
+      return payload.includes('report_date');
+    }
+
+    return false;
+  };
+
   try {
     const token = getToken();
     if (!token) {
@@ -1306,20 +1347,67 @@ export const getDailyRosterReport = async (params) => {
     }
 
     const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
-    const response = await axios.get(
-      `${API_BASE_URL}/reports/role-drilldown`,
-      {
-        params,
-        headers: {
-          ...NGROK_BYPASS_HEADERS,
-          'Authorization': `Bearer ${cleanToken}`,
-        },
-        responseType: 'blob', // Get CSV as blob
-      }
-    );
-
-    return response.data;
+    return await fetchRosterBlob(params, cleanToken);
   } catch (error) {
+    const canTryReportDateFallback =
+      params &&
+      typeof params.start_date === 'string' &&
+      typeof params.end_date === 'string';
+    const missingReportDate = canTryReportDateFallback
+      ? await isMissingReportDateError(error)
+      : false;
+
+    if (canTryReportDateFallback && missingReportDate) {
+      try {
+        const token = getToken();
+        const cleanToken = token.replace(/^Bearer\s+/i, '').trim();
+        const baseParams = params.project_id
+          ? { project_id: params.project_id }
+          : {};
+
+        // Backward compatibility for APIs that only accept report_date.
+        if (params.start_date === params.end_date) {
+          return await fetchRosterBlob(
+            { ...baseParams, report_date: params.start_date },
+            cleanToken
+          );
+        }
+
+        const start = new Date(`${params.start_date}T00:00:00`);
+        const end = new Date(`${params.end_date}T00:00:00`);
+        if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || start > end) {
+          throw new Error('Invalid roster date range.');
+        }
+
+        const csvRows = [];
+        let headerLine = '';
+        const cursor = new Date(start);
+        while (cursor <= end) {
+          const day = cursor.toISOString().slice(0, 10);
+          const blob = await fetchRosterBlob(
+            { ...baseParams, report_date: day },
+            cleanToken
+          );
+          const csvText = await blob.text();
+          const lines = csvText.split('\n').filter((line) => line.trim());
+          if (lines.length === 0) {
+            cursor.setDate(cursor.getDate() + 1);
+            continue;
+          }
+          if (!headerLine) headerLine = lines[0];
+          csvRows.push(...lines.slice(1));
+          cursor.setDate(cursor.getDate() + 1);
+        }
+
+        const mergedCsv = headerLine
+          ? [headerLine, ...csvRows].join('\n')
+          : '';
+        return new Blob([mergedCsv], { type: 'text/csv' });
+      } catch (fallbackError) {
+        console.error('Daily roster report fallback failed:', fallbackError);
+      }
+    }
+
     console.error('Error fetching daily roster report:', error);
     throw error;
   }
@@ -1328,7 +1416,7 @@ export const getDailyRosterReport = async (params) => {
 /**
  * Get project history report
  */
-export const getProjectHistoryReport = async (projectId) => {
+export const getProjectHistoryReport = async (projectId, params = {}) => {
   try {
     const token = getToken();
     if (!token) {
@@ -1339,7 +1427,7 @@ export const getProjectHistoryReport = async (projectId) => {
     const response = await axios.get(
       `${API_BASE_URL}/reports/project-history`,
       {
-        params: { project_id: projectId },
+        params: { project_id: projectId, ...params },
         headers: {
           ...NGROK_BYPASS_HEADERS,
           'Authorization': `Bearer ${cleanToken}`,

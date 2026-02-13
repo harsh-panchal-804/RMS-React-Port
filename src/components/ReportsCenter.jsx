@@ -9,9 +9,16 @@ import {
 } from '../utils/api';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Alert, AlertDescription } from '@/components/ui/alert';
@@ -44,13 +51,19 @@ const ReportsCenter = () => {
   
   // Tab 1: Daily Roster states
   const [rosterProjectId, setRosterProjectId] = useState('all');
-  const [rosterDate, setRosterDate] = useState(new Date());
-  const [rosterDatePickerOpen, setRosterDatePickerOpen] = useState(false);
+  const [rosterStartDate, setRosterStartDate] = useState(new Date());
+  const [rosterEndDate, setRosterEndDate] = useState(new Date());
+  const [rosterStartPickerOpen, setRosterStartPickerOpen] = useState(false);
+  const [rosterEndPickerOpen, setRosterEndPickerOpen] = useState(false);
   const [rosterData, setRosterData] = useState(null);
   const [rosterLoading, setRosterLoading] = useState(false);
   
   // Tab 2: Project History states
   const [historyProjectId, setHistoryProjectId] = useState('');
+  const [historyStartDate, setHistoryStartDate] = useState(new Date(Date.now() - 30 * 24 * 60 * 60 * 1000));
+  const [historyEndDate, setHistoryEndDate] = useState(new Date());
+  const [historyStartPickerOpen, setHistoryStartPickerOpen] = useState(false);
+  const [historyEndPickerOpen, setHistoryEndPickerOpen] = useState(false);
   const [historyData, setHistoryData] = useState(null);
   const [historyLoading, setHistoryLoading] = useState(false);
   
@@ -133,12 +146,20 @@ const ReportsCenter = () => {
 
   // Tab 1: Preview Daily Roster
   const handlePreviewRoster = async () => {
+    if (rosterStartDate > rosterEndDate) {
+      toast.error('❌ Invalid date range', {
+        description: "'From Date' cannot be after 'To Date'.",
+      });
+      return;
+    }
+
     setRosterLoading(true);
     setRosterData(null);
     
     try {
       const params = {
-        report_date: format(rosterDate, 'yyyy-MM-dd'),
+        start_date: format(rosterStartDate, 'yyyy-MM-dd'),
+        end_date: format(rosterEndDate, 'yyyy-MM-dd'),
       };
       
       if (rosterProjectId !== 'all') {
@@ -150,7 +171,7 @@ const ReportsCenter = () => {
       
       if (!csvText || csvText.trim() === '') {
         toast.warning('⚠️ No data available', {
-          description: 'No roster data found for the selected date and project.',
+          description: 'No roster data found for the selected date range and project.',
         });
         setRosterData(null);
         return;
@@ -182,7 +203,10 @@ const ReportsCenter = () => {
       const projectName = rosterProjectId === 'all' 
         ? 'All_Projects' 
         : projects.find(p => p.id === rosterProjectId)?.name || 'Project';
-      const fileName = `Roster_${projectName}_${format(rosterDate, 'yyyy-MM-dd')}.csv`;
+      const startDateStr = format(rosterStartDate, 'yyyy-MM-dd');
+      const endDateStr = format(rosterEndDate, 'yyyy-MM-dd');
+      const dateSuffix = startDateStr === endDateStr ? startDateStr : `${startDateStr}_to_${endDateStr}`;
+      const fileName = `Roster_${projectName}_${dateSuffix}.csv`;
       
       const url = window.URL.createObjectURL(rosterData.blob);
       const a = document.createElement('a');
@@ -211,12 +235,21 @@ const ReportsCenter = () => {
       });
       return;
     }
+    if (historyStartDate > historyEndDate) {
+      toast.error('❌ Invalid date range', {
+        description: "'From Date' cannot be after 'To Date'.",
+      });
+      return;
+    }
     
     setHistoryLoading(true);
     setHistoryData(null);
     
     try {
-      const blob = await getProjectHistoryReport(historyProjectId);
+      const blob = await getProjectHistoryReport(historyProjectId, {
+        start_date: format(historyStartDate, 'yyyy-MM-dd'),
+        end_date: format(historyEndDate, 'yyyy-MM-dd'),
+      });
       const csvText = await blob.text();
       
       if (!csvText || csvText.trim() === '') {
@@ -251,7 +284,7 @@ const ReportsCenter = () => {
     
     try {
       const projectName = projects.find(p => p.id === historyProjectId)?.name || 'Project';
-      const fileName = `History_${projectName}.csv`;
+      const fileName = `History_${projectName}_${format(historyStartDate, 'yyyy-MM-dd')}_to_${format(historyEndDate, 'yyyy-MM-dd')}.csv`;
       
       const url = window.URL.createObjectURL(historyData.blob);
       const a = document.createElement('a');
@@ -277,6 +310,12 @@ const ReportsCenter = () => {
     if (!performanceUserId) {
       toast.warning('⚠️ Missing required field', {
         description: 'Please select a user.',
+      });
+      return;
+    }
+    if (performanceStartDate > performanceEndDate) {
+      toast.error('❌ Invalid date range', {
+        description: "'Start Date' cannot be after 'End Date'.",
       });
       return;
     }
@@ -419,40 +458,84 @@ const ReportsCenter = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="space-y-2">
                   <Label>Select Project</Label>
-                  <Select value={rosterProjectId} onValueChange={setRosterProjectId}>
-                    <SelectTrigger>
-                      <SelectValue placeholder="Select project" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Projects</SelectItem>
-                      {projects.map(project => (
-                        <SelectItem key={project.id} value={project.id}>
-                          {project.name} ({project.code})
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <Combobox
+                    items={[
+                      'All Projects',
+                      ...projects.map((project) => `${project.name} (${project.code})`),
+                    ]}
+                    value={
+                      rosterProjectId === 'all'
+                        ? 'All Projects'
+                        : (projects.find((p) => p.id === rosterProjectId)
+                            ? `${projects.find((p) => p.id === rosterProjectId).name} (${projects.find((p) => p.id === rosterProjectId).code})`
+                            : '')
+                    }
+                    onValueChange={(label) => {
+                      if (label === 'All Projects') {
+                        setRosterProjectId('all');
+                        return;
+                      }
+                      const matched = projects.find((project) => `${project.name} (${project.code})` === label);
+                      setRosterProjectId(matched?.id || 'all');
+                    }}
+                  >
+                    <ComboboxInput placeholder="Select project" className="w-full" />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No project found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(item) => (
+                          <ComboboxItem key={item} value={item}>
+                            {item}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
                 </div>
                 <div className="space-y-2">
-                  <Label>Report Date</Label>
-                  <Popover open={rosterDatePickerOpen} onOpenChange={setRosterDatePickerOpen}>
+                  <Label>From Date</Label>
+                  <Popover open={rosterStartPickerOpen} onOpenChange={setRosterStartPickerOpen}>
                     <PopoverTrigger asChild>
                       <Button variant="outline" className="w-full justify-start text-left font-normal">
                         <CalendarIcon className="mr-2 h-4 w-4" />
-                        {format(rosterDate, 'PPP')}
+                        {format(rosterStartDate, 'PPP')}
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-auto p-0" align="start">
                       <Calendar
                         mode="single"
-                        selected={rosterDate}
+                        selected={rosterStartDate}
                         onSelect={(date) => {
                           if (date) {
-                            setRosterDate(date);
-                            setRosterDatePickerOpen(false);
+                            setRosterStartDate(date);
+                            setRosterStartPickerOpen(false);
+                          }
+                        }}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-2">
+                  <Label>To Date</Label>
+                  <Popover open={rosterEndPickerOpen} onOpenChange={setRosterEndPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {format(rosterEndDate, 'PPP')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={rosterEndDate}
+                        onSelect={(date) => {
+                          if (date) {
+                            setRosterEndDate(date);
+                            setRosterEndPickerOpen(false);
                           }
                         }}
                         initialFocus
@@ -520,7 +603,7 @@ const ReportsCenter = () => {
                 <Alert>
                   <Info className="h-4 w-4" />
                   <AlertDescription>
-                    No roster data found for the selected date and project.
+                    No roster data found for the selected date range and project.
                   </AlertDescription>
                 </Alert>
               ) : null}
@@ -541,20 +624,84 @@ const ReportsCenter = () => {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Select Project</Label>
-                <Select value={historyProjectId} onValueChange={setHistoryProjectId}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {projects.map(project => (
-                      <SelectItem key={project.id} value={project.id}>
-                        {project.name} ({project.code})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label>Select Project</Label>
+                  <Combobox
+                    items={projects.map((project) => `${project.name} (${project.code})`)}
+                    value={
+                      historyProjectId
+                        ? (projects.find((p) => p.id === historyProjectId)
+                            ? `${projects.find((p) => p.id === historyProjectId).name} (${projects.find((p) => p.id === historyProjectId).code})`
+                            : '')
+                        : ''
+                    }
+                    onValueChange={(label) => {
+                      const matched = projects.find((project) => `${project.name} (${project.code})` === label);
+                      setHistoryProjectId(matched?.id || '');
+                    }}
+                  >
+                    <ComboboxInput placeholder="Select project" className="w-full" />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No project found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(item) => (
+                          <ComboboxItem key={item} value={item}>
+                            {item}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                </div>
+                <div className="space-y-2">
+                  <Label>From Date</Label>
+                  <Popover open={historyStartPickerOpen} onOpenChange={setHistoryStartPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {format(historyStartDate, 'PPP')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={historyStartDate}
+                        onSelect={(date) => {
+                          if (date) {
+                            setHistoryStartDate(date);
+                            setHistoryStartPickerOpen(false);
+                          }
+                        }}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
+                <div className="space-y-2">
+                  <Label>To Date</Label>
+                  <Popover open={historyEndPickerOpen} onOpenChange={setHistoryEndPickerOpen}>
+                    <PopoverTrigger asChild>
+                      <Button variant="outline" className="w-full justify-start text-left font-normal">
+                        <CalendarIcon className="mr-2 h-4 w-4" />
+                        {format(historyEndDate, 'PPP')}
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-auto p-0" align="start">
+                      <Calendar
+                        mode="single"
+                        selected={historyEndDate}
+                        onSelect={(date) => {
+                          if (date) {
+                            setHistoryEndDate(date);
+                            setHistoryEndPickerOpen(false);
+                          }
+                        }}
+                        initialFocus
+                      />
+                    </PopoverContent>
+                  </Popover>
+                </div>
               </div>
 
               <Button
@@ -647,18 +794,30 @@ const ReportsCenter = () => {
                 <>
                   <div className="space-y-2">
                     <Label>Select User</Label>
-                    <Select value={performanceUserId} onValueChange={setPerformanceUserId}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="Select user" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {userOptions.map(user => (
-                          <SelectItem key={user.id} value={user.id}>
-                            {user.displayName}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                    <Combobox
+                      items={userOptions.map((user) => user.displayName)}
+                      value={
+                        performanceUserId
+                          ? (userOptions.find((u) => u.id === performanceUserId)?.displayName || '')
+                          : ''
+                      }
+                      onValueChange={(display) => {
+                        const matched = userOptions.find((u) => u.displayName === display);
+                        setPerformanceUserId(matched?.id || '');
+                      }}
+                    >
+                      <ComboboxInput placeholder="Select user" className="w-full" />
+                      <ComboboxContent>
+                        <ComboboxEmpty>No user found.</ComboboxEmpty>
+                        <ComboboxList>
+                          {(item) => (
+                            <ComboboxItem key={item} value={item}>
+                              {item}
+                            </ComboboxItem>
+                          )}
+                        </ComboboxList>
+                      </ComboboxContent>
+                    </Combobox>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

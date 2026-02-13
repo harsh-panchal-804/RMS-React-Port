@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { format, parseISO, startOfToday } from 'date-fns';
+import { format, parseISO } from 'date-fns';
 import { motion } from 'framer-motion';
 import {
   getAllProjects,
@@ -16,6 +16,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
@@ -26,6 +34,15 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
 import {
   ClipboardList,
@@ -55,6 +72,40 @@ const REQUEST_TYPE_ICONS = {
   SHIFT_CHANGE: '🔄',
   OTHER: '📋',
 };
+
+const hasTimezoneInfo = (value) => /(?:Z|[+-]\d{2}:?\d{2})$/.test(value);
+
+// Backend may send naive timestamps (without timezone). For parity with Streamlit,
+// interpret naive datetime as UTC and then convert to local date in the browser.
+const parseServerDateTimeToLocal = (value) => {
+  if (!value || typeof value !== 'string') return null;
+  const raw = value.trim();
+  if (!raw) return null;
+
+  try {
+    if (raw.includes('T')) {
+      if (hasTimezoneInfo(raw)) {
+        const withTz = parseISO(raw);
+        return Number.isNaN(withTz.getTime()) ? null : withTz;
+      }
+
+      const [datePart, timePartRaw = '00:00:00'] = raw.split('T');
+      const [year, month, day] = datePart.split('-').map(Number);
+      const timePart = timePartRaw.split('.')[0];
+      const [hours = 0, minutes = 0, seconds = 0] = timePart.split(':').map(Number);
+      const utcDate = new Date(Date.UTC(year, month - 1, day, hours, minutes, seconds));
+      return Number.isNaN(utcDate.getTime()) ? null : utcDate;
+    }
+
+    const [year, month, day] = raw.split(' ')[0].split('-').map(Number);
+    const dateOnly = new Date(year, month - 1, day);
+    return Number.isNaN(dateOnly.getTime()) ? null : dateOnly;
+  } catch {
+    return null;
+  }
+};
+
+const toLocalDateKey = (dateValue) => format(dateValue, 'yyyy-MM-dd');
 
 const AttendanceRequestApprovals = () => {
   const { user, token } = useAuth();
@@ -86,7 +137,7 @@ const AttendanceRequestApprovals = () => {
   const [updateDecision, setUpdateDecision] = useState('APPROVED');
   const [updateComment, setUpdateComment] = useState('');
   const [deleteApprovalId, setDeleteApprovalId] = useState('');
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [deleteConfirmDrawerOpen, setDeleteConfirmDrawerOpen] = useState(false);
   
   // Dialog states
   const [rejectDialogOpen, setRejectDialogOpen] = useState(false);
@@ -152,25 +203,19 @@ const AttendanceRequestApprovals = () => {
 
   // Calculate today's metrics
   const todayMetrics = useMemo(() => {
-    const today = startOfToday();
+    const todayKey = toLocalDateKey(new Date());
     let approvalsToday = 0;
     let rejectionsToday = 0;
 
     approvalHistory.forEach(approval => {
-      try {
-        const decidedAt = approval.decided_at;
-        if (decidedAt) {
-          const decidedDate = parseISO(decidedAt);
-          if (format(decidedDate, 'yyyy-MM-dd') === format(today, 'yyyy-MM-dd')) {
-            if (approval.decision === 'APPROVED') {
-              approvalsToday++;
-            } else if (approval.decision === 'REJECTED') {
-              rejectionsToday++;
-            }
-          }
+      const decidedAt = parseServerDateTimeToLocal(approval.decided_at);
+      if (!decidedAt) return;
+      if (toLocalDateKey(decidedAt) === todayKey) {
+        if (approval.decision === 'APPROVED') {
+          approvalsToday++;
+        } else if (approval.decision === 'REJECTED') {
+          rejectionsToday++;
         }
-      } catch (e) {
-        // Skip invalid dates
       }
     });
 
@@ -178,6 +223,11 @@ const AttendanceRequestApprovals = () => {
   }, [approvalHistory]);
 
   // Filter pending requests
+  const pendingProjectOptions = useMemo(() => {
+    const names = projects.map((p) => p.name).filter(Boolean);
+    return ['All Projects', ...names];
+  }, [projects]);
+
   const filteredPendingRequests = useMemo(() => {
     let filtered = [...pendingRequests];
 
@@ -213,23 +263,17 @@ const AttendanceRequestApprovals = () => {
 
     if (historyDateFrom) {
       filtered = filtered.filter(h => {
-        try {
-          const decidedAt = parseISO(h.decided_at);
-          return format(decidedAt, 'yyyy-MM-dd') >= format(historyDateFrom, 'yyyy-MM-dd');
-        } catch {
-          return false;
-        }
+        const decidedAt = parseServerDateTimeToLocal(h.decided_at);
+        if (!decidedAt) return false;
+        return toLocalDateKey(decidedAt) >= toLocalDateKey(historyDateFrom);
       });
     }
 
     if (historyDateTo) {
       filtered = filtered.filter(h => {
-        try {
-          const decidedAt = parseISO(h.decided_at);
-          return format(decidedAt, 'yyyy-MM-dd') <= format(historyDateTo, 'yyyy-MM-dd');
-        } catch {
-          return false;
-        }
+        const decidedAt = parseServerDateTimeToLocal(h.decided_at);
+        if (!decidedAt) return false;
+        return toLocalDateKey(decidedAt) <= toLocalDateKey(historyDateTo);
       });
     }
 
@@ -358,19 +402,17 @@ const AttendanceRequestApprovals = () => {
       });
       return;
     }
-    if (!deleteConfirm) {
-      toast.warning('⚠️ Confirmation required', {
-        description: 'Please confirm that you want to delete this record.',
-      });
-      return;
-    }
+    setDeleteConfirmDrawerOpen(true);
+  };
+
+  const confirmDeleteApproval = async () => {
     try {
       await deleteApproval(deleteApprovalId);
       toast.success('✅ Approval deleted successfully!', {
         description: 'The approval record has been deleted.',
       });
       setDeleteApprovalId('');
-      setDeleteConfirm(false);
+      setDeleteConfirmDrawerOpen(false);
       await fetchAllData();
     } catch (error) {
       const errorMessage = error?.message || 'Failed to delete approval. Please try again.';
@@ -522,19 +564,19 @@ const AttendanceRequestApprovals = () => {
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
               <div className="space-y-2">
                 <Label>Project</Label>
-                <Select value={pendingProjectFilter} onValueChange={setPendingProjectFilter}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select Project" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="All Projects">All Projects</SelectItem>
-                    {projects.map(project => (
-                      <SelectItem key={project.id} value={project.name}>
-                        {project.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                <Combobox items={pendingProjectOptions} value={pendingProjectFilter} onValueChange={setPendingProjectFilter}>
+                  <ComboboxInput placeholder="Select project" className="w-full" />
+                  <ComboboxContent>
+                    <ComboboxEmpty>No project found.</ComboboxEmpty>
+                    <ComboboxList>
+                      {(item) => (
+                        <ComboboxItem key={item} value={item}>
+                          {item}
+                        </ComboboxItem>
+                      )}
+                    </ComboboxList>
+                  </ComboboxContent>
+                </Combobox>
               </div>
 
               <div className="space-y-2">
@@ -973,16 +1015,6 @@ const AttendanceRequestApprovals = () => {
                       placeholder="Enter approval ID..."
                     />
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Checkbox
-                      id="delete-confirm"
-                      checked={deleteConfirm}
-                      onCheckedChange={(checked) => setDeleteConfirm(checked)}
-                    />
-                    <Label htmlFor="delete-confirm" className="cursor-pointer">
-                      I confirm I want to delete this record
-                    </Label>
-                  </div>
                   <Button
                     onClick={handleDeleteApproval}
                     variant="destructive"
@@ -990,6 +1022,24 @@ const AttendanceRequestApprovals = () => {
                   >
                     Delete Approval
                   </Button>
+                  <Drawer open={deleteConfirmDrawerOpen} onOpenChange={setDeleteConfirmDrawerOpen}>
+                    <DrawerContent>
+                      <DrawerHeader>
+                        <DrawerTitle>Are you sure you want to delete this approval?</DrawerTitle>
+                        <DrawerDescription>
+                          This action cannot be undone. Approval ID: {deleteApprovalId || '-'}
+                        </DrawerDescription>
+                      </DrawerHeader>
+                      <DrawerFooter className="items-center">
+                        <Button variant="destructive" onClick={confirmDeleteApproval} className="w-[70vw] max-w-[720px]">
+                          Confirm Delete
+                        </Button>
+                        <DrawerClose asChild>
+                          <Button variant="outline" className="w-[70vw] max-w-[720px]">Cancel</Button>
+                        </DrawerClose>
+                      </DrawerFooter>
+                    </DrawerContent>
+                  </Drawer>
                 </CardContent>
               </Card>
             )}

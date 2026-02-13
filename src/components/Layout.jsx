@@ -15,8 +15,14 @@ import ProjectProductivityDashboard from "./Dashboard";
 import UserProductivityDashboard from "./UserDashboard";
 import ProjectResourceAllocation from "./ProjectResourceAllocation";
 import AttendanceRequestApprovals from "./AttendanceRequestApprovals";
+import TimeSheetApprovals from "./TimeSheetApprovals";
 import ProjectManagementCenter from "./ProjectManagementCenter";
 import ReportsCenter from "./ReportsCenter";
+import TeamStats from "./TeamStats";
+import UserHistory from "./UserHistory";
+import AttendanceDaily from "./AttendanceDaily";
+import AttendanceRequests from "./AttendanceRequests";
+import UserHome from "./UserHome";
 import Home from "./Home";
 import NotFound from "./NotFound";
 import { Login } from "./Login";
@@ -52,7 +58,21 @@ export function Layout() {
   }, [isAuthenticated, loading, user, token]);
   
   // Check if current route should hide sidebar (404 page)
-  const validRoutes = ["/", "/dashboard", "/user-dashboard", "/project-resource-allocation", "/attendance-approvals", "/project-management", "/reports", "/404"];
+  const validRoutes = [
+    "/",
+    "/dashboard",
+    "/user-dashboard",
+    "/project-resource-allocation",
+    "/attendance-approvals",
+    "/time-sheet-approvals",
+    "/project-management",
+    "/reports",
+    "/team-stats",
+    "/history",
+    "/attendance-daily",
+    "/attendance-requests",
+    "/404",
+  ];
   const is404Page = !validRoutes.includes(location.pathname) || location.pathname === "/404";
 
   // Show loading state
@@ -73,7 +93,9 @@ export function Layout() {
 
   console.log('✅ Authenticated, showing layout');
 
-  const links = [
+  const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(user?.role);
+
+  const adminLinks = [
     {
       label: "Home",
       path: "/",
@@ -88,18 +110,27 @@ export function Layout() {
         <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
-    {
-      label: "User Productivity Dashboard",
-      path: "/user-dashboard",
-      icon: (
-        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
-      ),
-    },
+    ...(user?.role === 'ADMIN'
+      ? [{
+          label: "User Productivity Dashboard",
+          path: "/user-dashboard",
+          icon: (
+            <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+          ),
+        }]
+      : []),
     {
       label: "Project Resource Allocation",
       path: "/project-resource-allocation",
       icon: (
         <IconUsersGroup className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
+      ),
+    },
+    {
+      label: "Time Sheet Approvals",
+      path: "/time-sheet-approvals",
+      icon: (
+        <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />
       ),
     },
     {
@@ -131,6 +162,31 @@ export function Layout() {
       ),
     },
   ];
+
+  const userLinks = [
+    {
+      label: "Home",
+      path: "/",
+      icon: <IconHome className="h-4 w-4  shrink-0 text-neutral-700 dark:text-neutral-200" />,
+    },
+    {
+      label: "Team stats",
+      path: "/team-stats",
+      icon: <IconUsersGroup className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />,
+    },
+    {
+      label: "Leave/WFH Requests",
+      path: "/attendance-requests",
+      icon: <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />,
+    },
+    {
+      label: "History",
+      path: "/history",
+      icon: <IconBrandTabler className="h-4 w-4 shrink-0 text-neutral-700 dark:text-neutral-200" />,
+    },
+  ];
+
+  const links = isAdminOrManager ? adminLinks : userLinks;
   
   // If 404 page, render without sidebar
   if (is404Page) {
@@ -240,13 +296,18 @@ export function Layout() {
           </div>
           <div className="flex-1 overflow-auto">
             <Routes>
-              <Route path="/" element={<Home />} />
+              <Route path="/" element={isAdminOrManager ? <Home /> : <UserHome />} />
               <Route path="/dashboard" element={<ProjectProductivityDashboard />} />
               <Route path="/user-dashboard" element={<UserProductivityDashboard />} />
               <Route path="/project-resource-allocation" element={<ProjectResourceAllocation />} />
+              <Route path="/time-sheet-approvals" element={<TimeSheetApprovals />} />
               <Route path="/attendance-approvals" element={<AttendanceRequestApprovals />} />
               <Route path="/project-management" element={<ProjectManagementCenter />} />
               <Route path="/reports" element={<ReportsCenter />} />
+              <Route path="/team-stats" element={<TeamStats />} />
+              <Route path="/history" element={<UserHistory />} />
+              <Route path="/attendance-daily" element={<AttendanceDaily />} />
+              <Route path="/attendance-requests" element={<AttendanceRequests />} />
               <Route path="/404" element={<NotFound />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

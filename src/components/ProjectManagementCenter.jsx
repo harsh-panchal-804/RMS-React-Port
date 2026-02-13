@@ -1,8 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { format, parseISO } from 'date-fns';
 import {
   getAllProjects,
   getAllUsers,
+  authenticatedRequest,
   createProject,
   updateProject,
   bulkUploadProjects,
@@ -23,6 +24,14 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import {
+  Combobox,
+  ComboboxInput,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxList,
+  ComboboxItem,
+} from '@/components/ui/combobox';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Badge } from '@/components/ui/badge';
@@ -33,6 +42,15 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import {
+  Drawer,
+  DrawerClose,
+  DrawerContent,
+  DrawerDescription,
+  DrawerFooter,
+  DrawerHeader,
+  DrawerTitle,
+} from '@/components/ui/drawer';
+import {
   Settings,
   Plus,
   Upload,
@@ -40,6 +58,7 @@ import {
   FileText,
   Calendar as CalendarIcon,
   User,
+  Users,
   FolderOpen,
   CheckCircle2,
   AlertCircle,
@@ -55,6 +74,8 @@ import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
 
 const ROLE_OPTIONS = ['ANNOTATION', 'QC', 'LIVE_QC', 'RETRO_QC', 'PM', 'APM', 'RPM'];
+const USER_ROLE_OPTIONS = ['USER', 'MANAGER', 'ADMIN'];
+const WEEKOFF_OPTIONS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'];
 
 const ProjectManagementCenter = () => {
   const { user, token } = useAuth();
@@ -65,6 +86,9 @@ const ProjectManagementCenter = () => {
   const [projects, setProjects] = useState([]);
   const [users, setUsers] = useState([]);
   const [projectMembers, setProjectMembers] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [projectManagers, setProjectManagers] = useState([]);
+  const [projectOwnersByProject, setProjectOwnersByProject] = useState({});
   
   // Tab 1: Manage Projects states
   const [searchText, setSearchText] = useState('');
@@ -78,6 +102,8 @@ const ProjectManagementCenter = () => {
   const [createDatePickerOpen, setCreateDatePickerOpen] = useState(false);
   const [endDatePickerOpen, setEndDatePickerOpen] = useState(false);
   const [editedProjects, setEditedProjects] = useState({});
+  const [ownerAssignProjectId, setOwnerAssignProjectId] = useState('');
+  const [ownerAssignManagerIds, setOwnerAssignManagerIds] = useState([]);
   
   // Tab 2: Team Allocations states
   const [selectedProjectId, setSelectedProjectId] = useState('');
@@ -92,6 +118,9 @@ const ProjectManagementCenter = () => {
   const [editMemberUserId, setEditMemberUserId] = useState('');
   const [editMemberNewRole, setEditMemberNewRole] = useState('');
   const [removeMemberUserId, setRemoveMemberUserId] = useState('');
+  const [removeMemberConfirmDrawerOpen, setRemoveMemberConfirmDrawerOpen] = useState(false);
+  const [weekoffUpdateUserId, setWeekoffUpdateUserId] = useState('');
+  const [weekoffUpdateValues, setWeekoffUpdateValues] = useState([]);
   
   // Tab 3: Quality Assessment states (same as standalone page)
   const [qaMode, setQaMode] = useState('Individual Assessment');
@@ -113,6 +142,42 @@ const ProjectManagementCenter = () => {
   const [qaCsvPreview, setQaCsvPreview] = useState(null);
   const [uploading, setUploading] = useState(false);
 
+  // Tab 4: User Management states
+  const [userMgmtAction, setUserMgmtAction] = useState('add');
+  const [addUserMethod, setAddUserMethod] = useState('single');
+  const [newUserEmail, setNewUserEmail] = useState('');
+  const [newUserName, setNewUserName] = useState('');
+  const [newUserRole, setNewUserRole] = useState('USER');
+  const [newUserDoj, setNewUserDoj] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [newUserShiftId, setNewUserShiftId] = useState('');
+  const [newUserRpmId, setNewUserRpmId] = useState('');
+  const [newUserWeekoffs, setNewUserWeekoffs] = useState(['SUNDAY']);
+  const [newUserWorkRole, setNewUserWorkRole] = useState('');
+  const [newUserSoulId, setNewUserSoulId] = useState('');
+  const [newUserQualityRating, setNewUserQualityRating] = useState('');
+  const [usersUploadFile, setUsersUploadFile] = useState(null);
+  const [usersCsvPreview, setUsersCsvPreview] = useState(null);
+  const [usersUploadErrors, setUsersUploadErrors] = useState([]);
+  const usersFileInputRef = useRef(null);
+  const [userSearchName, setUserSearchName] = useState('');
+  const [userSearchEmail, setUserSearchEmail] = useState('');
+  const [userSearchActive, setUserSearchActive] = useState('All');
+  const [selectedEditUserId, setSelectedEditUserId] = useState('');
+  const [editUserForm, setEditUserForm] = useState({
+    email: '',
+    name: '',
+    role: 'USER',
+    doj: format(new Date(), 'yyyy-MM-dd'),
+    dol: '',
+    is_active: true,
+    default_shift_id: '',
+    rpm_user_id: '',
+    weekoffs: ['SUNDAY'],
+    work_role: '',
+    soul_id: '',
+    quality_rating: '',
+  });
+
   // Check role access
   useEffect(() => {
     if (user && user.role && !['ADMIN', 'MANAGER'].includes(user.role)) {
@@ -126,13 +191,30 @@ const ProjectManagementCenter = () => {
     
     setLoading(true);
     try {
-      const [projectsData, usersData] = await Promise.all([
+      const [projectsData, usersData, shiftsData, managersData] = await Promise.all([
         getAllProjects(),
         getAllUsers({ limit: 1000 }),
+        authenticatedRequest('GET', '/admin/shifts/').catch(() => []),
+        authenticatedRequest('GET', '/admin/users/project_managers').catch(() => []),
       ]);
       
       setProjects(projectsData);
       setUsers(usersData);
+      setShifts(Array.isArray(shiftsData) ? shiftsData : []);
+      setProjectManagers(Array.isArray(managersData) ? managersData : []);
+
+      // Fetch owners for PM/APM assignment parity
+      const ownerPairs = await Promise.all(
+        (projectsData || []).map(async (project) => {
+          try {
+            const owners = await authenticatedRequest('GET', `/admin/projects/${project.id}/owners`);
+            return [project.id, Array.isArray(owners) ? owners : []];
+          } catch {
+            return [project.id, []];
+          }
+        })
+      );
+      setProjectOwnersByProject(Object.fromEntries(ownerPairs));
     } catch (error) {
       console.error('Error fetching data:', error);
       toast.error('❌ Failed to load data', {
@@ -185,6 +267,16 @@ const ProjectManagementCenter = () => {
     } finally {
       setRefreshing(false);
     }
+  };
+
+  const normalizeWeekoffs = (values) => {
+    return (values || [])
+      .map((value) => {
+        if (typeof value === 'string') return value.toUpperCase();
+        if (value && typeof value === 'object') return String(value.value || value.name || '').toUpperCase();
+        return '';
+      })
+      .filter(Boolean);
   };
 
   // Tab 1: Create Project
@@ -438,6 +530,16 @@ const ProjectManagementCenter = () => {
   };
 
   // Tab 2: Remove Member
+  const openRemoveMemberConfirm = () => {
+    if (!removeMemberUserId) {
+      toast.warning('⚠️ Missing required fields', {
+        description: 'Please select a member to remove.',
+      });
+      return;
+    }
+    setRemoveMemberConfirmDrawerOpen(true);
+  };
+
   const handleRemoveMember = async () => {
     if (!removeMemberUserId) {
       toast.warning('⚠️ Missing required fields', {
@@ -451,6 +553,7 @@ const ProjectManagementCenter = () => {
       toast.success('✅ Member removed successfully!', {
         description: 'The member has been removed from the project.',
       });
+      setRemoveMemberConfirmDrawerOpen(false);
       
       // Reset
       setRemoveMemberUserId('');
@@ -719,6 +822,338 @@ const ProjectManagementCenter = () => {
     return userOptions;
   }, [userOptions]);
 
+  const managerOptions = useMemo(() => {
+    return projectManagers.map((manager) => ({
+      id: manager.id,
+      label: manager.email ? `${manager.name} (${manager.email})` : manager.name,
+      name: manager.name,
+      email: manager.email,
+    }));
+  }, [projectManagers]);
+
+  const shiftOptions = useMemo(() => {
+    return shifts.map((shift) => ({
+      id: shift.id,
+      label: shift.name,
+    }));
+  }, [shifts]);
+
+  const selectedOwnerProject = useMemo(
+    () => projects.find((project) => project.id === ownerAssignProjectId) || null,
+    [projects, ownerAssignProjectId]
+  );
+
+  const removeMemberDisplayName = useMemo(() => {
+    const member = projectMembers.find((m) => String(m.user_id) === String(removeMemberUserId));
+    return member ? `${member.name} (${member.email || 'No email'})` : '';
+  }, [projectMembers, removeMemberUserId]);
+
+  useEffect(() => {
+    if (!ownerAssignProjectId) {
+      setOwnerAssignManagerIds([]);
+      return;
+    }
+    const owners = projectOwnersByProject[ownerAssignProjectId] || [];
+    const ownerIds = owners
+      .map((owner) => owner.user_id || owner.id)
+      .filter(Boolean)
+      .map(String);
+    setOwnerAssignManagerIds(ownerIds);
+  }, [ownerAssignProjectId, projectOwnersByProject]);
+
+  useEffect(() => {
+    if (!weekoffUpdateUserId) {
+      setWeekoffUpdateValues([]);
+      return;
+    }
+    const selectedUser = users.find((u) => String(u.id) === String(weekoffUpdateUserId));
+    setWeekoffUpdateValues(normalizeWeekoffs(selectedUser?.weekoffs || ['SUNDAY']));
+  }, [weekoffUpdateUserId, users]);
+
+  const handleSaveProjectOwners = async () => {
+    if (!ownerAssignProjectId) {
+      toast.warning('⚠️ Select a project first');
+      return;
+    }
+    try {
+      const response = await authenticatedRequest(
+        'PUT',
+        `/admin/projects/${ownerAssignProjectId}/owners/bulk`,
+        {
+          user_ids: ownerAssignManagerIds.map(String),
+          work_role: 'PM',
+        }
+      );
+      toast.success('✅ PM/APM assignment saved', {
+        description: `Added: ${response?.added || 0}, Removed: ${response?.removed || 0}`,
+      });
+      await fetchAllData();
+    } catch (error) {
+      toast.error('❌ Failed to save PM/APM assignment', {
+        description: error?.message || 'Please try again.',
+      });
+    }
+  };
+
+  const handleUpdateUserWeekoff = async () => {
+    if (!weekoffUpdateUserId) {
+      toast.warning('⚠️ Select a user first');
+      return;
+    }
+    if (!weekoffUpdateValues.length) {
+      toast.warning('⚠️ Select at least one weekoff day');
+      return;
+    }
+    try {
+      await authenticatedRequest('PUT', `/admin/users/${weekoffUpdateUserId}`, {
+        weekoffs: weekoffUpdateValues,
+      });
+      toast.success('✅ Weekoff updated successfully');
+      await fetchAllData();
+    } catch (error) {
+      toast.error('❌ Failed to update weekoff', {
+        description: error?.message || 'Please try again.',
+      });
+    }
+  };
+
+  const handleAddSingleUser = async () => {
+    if (!newUserEmail.trim() || !newUserName.trim()) {
+      toast.warning('⚠️ Email and Name are required');
+      return;
+    }
+    try {
+      const payload = {
+        email: newUserEmail.trim(),
+        name: newUserName.trim(),
+        role: newUserRole,
+        doj: newUserDoj,
+        is_active: true,
+        weekoffs: newUserWeekoffs.length ? newUserWeekoffs : ['SUNDAY'],
+        default_shift_id: newUserShiftId || null,
+        rpm_user_id: newUserRpmId || null,
+        work_role: newUserWorkRole.trim() || null,
+        soul_id: newUserSoulId.trim() || null,
+        quality_rating: newUserQualityRating.trim() || null,
+      };
+      await authenticatedRequest('POST', '/admin/users/', payload);
+      toast.success(`✅ User '${newUserName.trim()}' added successfully`);
+      setNewUserEmail('');
+      setNewUserName('');
+      setNewUserRole('USER');
+      setNewUserDoj(format(new Date(), 'yyyy-MM-dd'));
+      setNewUserShiftId('');
+      setNewUserRpmId('');
+      setNewUserWeekoffs(['SUNDAY']);
+      setNewUserWorkRole('');
+      setNewUserSoulId('');
+      setNewUserQualityRating('');
+      await fetchAllData();
+    } catch (error) {
+      toast.error('❌ Failed to add user', {
+        description: error?.message || 'Please try again.',
+      });
+    }
+  };
+
+  const handleUsersFileUpload = (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (file.type !== 'text/csv' && !file.name.endsWith('.csv')) {
+      toast.error('❌ Invalid file type', {
+        description: 'Please upload a CSV file.',
+      });
+      return;
+    }
+
+    setUsersUploadFile(file);
+    setUsersUploadErrors([]);
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = String(e.target?.result || '');
+        const lines = text.split('\n').filter((line) => line.trim());
+        if (lines.length === 0) {
+          setUsersCsvPreview([]);
+          return;
+        }
+        const headers = lines[0].split(',').map((h) => h.trim());
+        const preview = lines.slice(1, 11).map((line) => {
+          const values = line.split(',').map((v) => v.trim());
+          return headers.reduce((acc, header, idx) => {
+            acc[header] = values[idx] || '';
+            return acc;
+          }, {});
+        });
+        setUsersCsvPreview(preview);
+      } catch (error) {
+        toast.error('❌ Error reading CSV file', {
+          description: 'Please check the file format.',
+        });
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleBulkUploadUsers = async () => {
+    if (!usersUploadFile) {
+      toast.warning('⚠️ No file selected');
+      return;
+    }
+    setUploading(true);
+    setUsersUploadErrors([]);
+    try {
+      const csvText = await usersUploadFile.text();
+      const lines = csvText.split('\n').filter((line) => line.trim());
+      if (lines.length < 2) {
+        throw new Error('CSV has no data rows.');
+      }
+
+      const headers = lines[0].split(',').map((h) => h.trim());
+      const rows = lines.slice(1).map((line) => {
+        const values = line.split(',').map((v) => v.trim());
+        return headers.reduce((acc, header, idx) => {
+          acc[header] = values[idx] || '';
+          return acc;
+        }, {});
+      });
+
+      const requiredColumns = ['email', 'name', 'role'];
+      const missing = requiredColumns.filter((col) => !headers.includes(col));
+      if (missing.length > 0) {
+        throw new Error(`Missing required columns: ${missing.join(', ')}`);
+      }
+
+      const shiftNameToId = Object.fromEntries(shiftOptions.map((s) => [s.label, s.id]));
+      const managerEmailToId = Object.fromEntries(
+        managerOptions.map((m) => [String(m.email || '').trim(), m.id])
+      );
+
+      let successCount = 0;
+      const errors = [];
+      for (let idx = 0; idx < rows.length; idx++) {
+        const row = rows[idx];
+        try {
+          const payload = {
+            email: String(row.email || '').trim(),
+            name: String(row.name || '').trim(),
+            role: String(row.role || 'USER').trim().toUpperCase(),
+            doj: String(row.doj || format(new Date(), 'yyyy-MM-dd')).trim(),
+            is_active: true,
+            weekoffs: row.weekoffs
+              ? String(row.weekoffs)
+                  .split(',')
+                  .map((w) => w.trim().toUpperCase())
+                  .filter(Boolean)
+              : ['SUNDAY'],
+            work_role: row.work_role ? String(row.work_role).trim() : null,
+            soul_id: row.soul_id ? String(row.soul_id).trim() : null,
+            quality_rating: row.quality_rating ? String(row.quality_rating).trim() : null,
+          };
+
+          if (row.shift_name && shiftNameToId[row.shift_name]) {
+            payload.default_shift_id = shiftNameToId[row.shift_name];
+          }
+          if (row.rpm_email && managerEmailToId[String(row.rpm_email).trim()]) {
+            payload.rpm_user_id = managerEmailToId[String(row.rpm_email).trim()];
+          }
+
+          await authenticatedRequest('POST', '/admin/users/', payload);
+          successCount += 1;
+        } catch (error) {
+          errors.push(`Row ${idx + 1} (${row.email || 'unknown'}): ${error?.message || 'Upload failed'}`);
+        }
+      }
+
+      setUsersUploadErrors(errors);
+      if (successCount > 0) {
+        toast.success(`✅ Successfully added ${successCount} users`);
+      }
+      if (errors.length > 0) {
+        toast.warning(`⚠️ ${errors.length} rows failed during upload`);
+      }
+      await fetchAllData();
+    } catch (error) {
+      toast.error('❌ Bulk upload failed', {
+        description: error?.message || 'Please try again.',
+      });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const searchedUsers = useMemo(() => {
+    let filtered = [...users];
+    if (userSearchName.trim()) {
+      const query = userSearchName.trim().toLowerCase();
+      filtered = filtered.filter((u) => String(u.name || '').toLowerCase().includes(query));
+    }
+    if (userSearchEmail.trim()) {
+      const query = userSearchEmail.trim().toLowerCase();
+      filtered = filtered.filter((u) => String(u.email || '').toLowerCase().includes(query));
+    }
+    if (userSearchActive === 'Active Only') {
+      filtered = filtered.filter((u) => Boolean(u.is_active));
+    } else if (userSearchActive === 'Inactive Only') {
+      filtered = filtered.filter((u) => !Boolean(u.is_active));
+    }
+    return filtered;
+  }, [users, userSearchName, userSearchEmail, userSearchActive]);
+
+  useEffect(() => {
+    if (!selectedEditUserId) return;
+    const selectedUser = users.find((u) => String(u.id) === String(selectedEditUserId));
+    if (!selectedUser) return;
+    setEditUserForm({
+      email: selectedUser.email || '',
+      name: selectedUser.name || '',
+      role: selectedUser.role?.value || selectedUser.role || 'USER',
+      doj: selectedUser.doj || format(new Date(), 'yyyy-MM-dd'),
+      dol: selectedUser.dol || '',
+      is_active: Boolean(selectedUser.is_active),
+      default_shift_id: selectedUser.default_shift_id || '',
+      rpm_user_id: selectedUser.rpm_user_id || '',
+      weekoffs: normalizeWeekoffs(selectedUser.weekoffs || ['SUNDAY']),
+      work_role: selectedUser.work_role || '',
+      soul_id: selectedUser.soul_id ? String(selectedUser.soul_id) : '',
+      quality_rating: selectedUser.quality_rating || '',
+    });
+  }, [selectedEditUserId, users]);
+
+  const handleUpdateUser = async () => {
+    if (!selectedEditUserId) {
+      toast.warning('⚠️ Select a user to update');
+      return;
+    }
+    if (!editUserForm.email.trim() || !editUserForm.name.trim()) {
+      toast.warning('⚠️ Email and Name are required');
+      return;
+    }
+    try {
+      const payload = {
+        email: editUserForm.email.trim(),
+        name: editUserForm.name.trim(),
+        role: editUserForm.role,
+        doj: editUserForm.doj,
+        is_active: Boolean(editUserForm.is_active),
+        weekoffs: editUserForm.weekoffs.length ? editUserForm.weekoffs : ['SUNDAY'],
+        default_shift_id: editUserForm.default_shift_id || null,
+        rpm_user_id: editUserForm.rpm_user_id || null,
+        work_role: editUserForm.work_role.trim() || null,
+        soul_id: editUserForm.soul_id.trim() || null,
+        quality_rating: editUserForm.quality_rating.trim() || null,
+      };
+      if (editUserForm.dol) payload.dol = editUserForm.dol;
+      await authenticatedRequest('PUT', `/admin/users/${selectedEditUserId}`, payload);
+      toast.success('✅ User updated successfully');
+      await fetchAllData();
+    } catch (error) {
+      toast.error('❌ Failed to update user', {
+        description: error?.message || 'Please try again.',
+      });
+    }
+  };
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -743,10 +1178,23 @@ const ProjectManagementCenter = () => {
       </div>
 
       <Tabs defaultValue="projects" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-3">
-          <TabsTrigger value="projects">📂 Manage Projects</TabsTrigger>
-          <TabsTrigger value="allocations">👥 Team Allocations</TabsTrigger>
-          <TabsTrigger value="quality">⭐ Quality Assessment</TabsTrigger>
+        <TabsList className="grid w-full grid-cols-4">
+          <TabsTrigger value="projects" className="flex items-center gap-2">
+            <FolderOpen className="h-4 w-4" />
+            Manage Projects
+          </TabsTrigger>
+          <TabsTrigger value="allocations" className="flex items-center gap-2">
+            <User className="h-4 w-4" />
+            Team Allocations
+          </TabsTrigger>
+          <TabsTrigger value="quality" className="flex items-center gap-2">
+            <Star className="h-4 w-4" />
+            Quality Assessment
+          </TabsTrigger>
+          <TabsTrigger value="users" className="flex items-center gap-2">
+            <Users className="h-4 w-4" />
+            User Management
+          </TabsTrigger>
         </TabsList>
 
         {/* TAB 1: Manage Projects */}
@@ -1106,6 +1554,99 @@ const ProjectManagementCenter = () => {
               </CardContent>
             </Card>
           )}
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                Assign PM / APM to Projects
+              </CardTitle>
+              <CardDescription>
+                Select project owners from manager list and save assignment.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Select Project</Label>
+                  <Combobox
+                    items={filteredProjects.map((project) => `${project.name} (${project.code})`)}
+                    value={
+                      ownerAssignProjectId
+                        ? (() => {
+                            const p = filteredProjects.find((x) => x.id === ownerAssignProjectId) || projects.find((x) => x.id === ownerAssignProjectId);
+                            return p ? `${p.name} (${p.code})` : '';
+                          })()
+                        : ''
+                    }
+                    onValueChange={(label) => {
+                      const matched = filteredProjects.find((project) => `${project.name} (${project.code})` === label)
+                        || projects.find((project) => `${project.name} (${project.code})` === label);
+                      setOwnerAssignProjectId(matched?.id || '');
+                    }}
+                  >
+                    <ComboboxInput placeholder="Select project" className="w-full" />
+                    <ComboboxContent>
+                      <ComboboxEmpty>No project found.</ComboboxEmpty>
+                      <ComboboxList>
+                        {(item) => (
+                          <ComboboxItem key={item} value={item}>
+                            {item}
+                          </ComboboxItem>
+                        )}
+                      </ComboboxList>
+                    </ComboboxContent>
+                  </Combobox>
+                </div>
+                <div className="space-y-2">
+                  <Label>Select PM / APM</Label>
+                  <Select
+                    value="__multi__"
+                    onValueChange={(value) => {
+                      if (value === '__multi__') return;
+                      setOwnerAssignManagerIds((prev) =>
+                        prev.includes(value)
+                          ? prev.filter((id) => id !== value)
+                          : [...prev, value]
+                      );
+                    }}
+                    disabled={!ownerAssignProjectId}
+                  >
+                    <SelectTrigger>
+                      <SelectValue
+                        placeholder={
+                          ownerAssignManagerIds.length > 0
+                            ? `${ownerAssignManagerIds.length} manager(s) selected`
+                            : 'Choose manager(s)'
+                        }
+                      />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {managerOptions.map((manager) => (
+                        <SelectItem key={manager.id} value={String(manager.id)}>
+                          {ownerAssignManagerIds.includes(String(manager.id)) ? '✓ ' : ''}{manager.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              {ownerAssignProjectId && (
+                <div className="text-sm text-muted-foreground">
+                  {selectedOwnerProject ? `Project: ${selectedOwnerProject.name}` : ''} | Selected owners:{' '}
+                  {ownerAssignManagerIds.length
+                    ? ownerAssignManagerIds
+                        .map((id) => managerOptions.find((manager) => String(manager.id) === String(id))?.name || id)
+                        .join(', ')
+                    : 'None'}
+                </div>
+              )}
+              <Button onClick={handleSaveProjectOwners} disabled={!ownerAssignProjectId}>
+                <CheckCircle2 className="h-4 w-4 mr-2" />
+                Save PM/APM Assignment
+              </Button>
+            </CardContent>
+          </Card>
         </TabsContent>
 
         {/* TAB 2: Team Allocations */}
@@ -1116,25 +1657,34 @@ const ProjectManagementCenter = () => {
               <CardTitle>Select Project</CardTitle>
             </CardHeader>
             <CardContent>
-              <Select
-                value={selectedProjectId}
-                onValueChange={(value) => {
-                  setSelectedProjectId(value);
-                  const project = projects.find(p => p.id === value);
+              <Combobox
+                items={projects.map((project) => `${project.name} (${project.code})`)}
+                value={
+                  selectedProjectId
+                    ? (() => {
+                        const p = projects.find((x) => x.id === selectedProjectId);
+                        return p ? `${p.name} (${p.code})` : '';
+                      })()
+                    : ''
+                }
+                onValueChange={(label) => {
+                  const project = projects.find((p) => `${p.name} (${p.code})` === label);
+                  setSelectedProjectId(project?.id || '');
                   setSelectedProjectName(project?.name || '');
                 }}
               >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select a project" />
-                </SelectTrigger>
-                <SelectContent>
-                  {projects.map(project => (
-                    <SelectItem key={project.id} value={project.id}>
-                      {project.name} ({project.code})
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                <ComboboxInput placeholder="Select a project" className="w-full" />
+                <ComboboxContent>
+                  <ComboboxEmpty>No project found.</ComboboxEmpty>
+                  <ComboboxList>
+                    {(item) => (
+                      <ComboboxItem key={item} value={item}>
+                        {item}
+                      </ComboboxItem>
+                    )}
+                  </ComboboxList>
+                </ComboboxContent>
+              </Combobox>
             </CardContent>
           </Card>
 
@@ -1152,18 +1702,34 @@ const ProjectManagementCenter = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="space-y-2">
                       <Label>Select User</Label>
-                      <Select value={addMemberUserId} onValueChange={setAddMemberUserId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select user" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {availableUsers.map(user => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.email ? `${user.name} (${user.email})` : user.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Combobox
+                        items={availableUsers.map((u) => (u.email ? `${u.name} (${u.email})` : u.name))}
+                        value={
+                          addMemberUserId
+                            ? (() => {
+                                const u = availableUsers.find((x) => x.id === addMemberUserId) || users.find((x) => x.id === addMemberUserId);
+                                return u ? (u.email ? `${u.name} (${u.email})` : u.name) : '';
+                              })()
+                            : ''
+                        }
+                        onValueChange={(label) => {
+                          const matched = availableUsers.find((u) => (u.email ? `${u.name} (${u.email})` : u.name) === label)
+                            || users.find((u) => (u.email ? `${u.name} (${u.email})` : u.name) === label);
+                          setAddMemberUserId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select user" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No user found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
                     </div>
                     <div className="space-y-2">
                       <Label>Work Role</Label>
@@ -1298,18 +1864,33 @@ const ProjectManagementCenter = () => {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                           <div className="space-y-2">
                             <Label>Select Member</Label>
-                            <Select value={editMemberUserId} onValueChange={setEditMemberUserId}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select member" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {projectMembers.map(member => (
-                                  <SelectItem key={member.user_id} value={member.user_id}>
-                                    {member.name} ({member.email || 'No email'})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Combobox
+                              items={projectMembers.map((m) => `${m.name} (${m.email || 'No email'})`)}
+                              value={
+                                editMemberUserId
+                                  ? (() => {
+                                      const m = projectMembers.find((x) => String(x.user_id) === String(editMemberUserId));
+                                      return m ? `${m.name} (${m.email || 'No email'})` : '';
+                                    })()
+                                  : ''
+                              }
+                              onValueChange={(label) => {
+                                const matched = projectMembers.find((m) => `${m.name} (${m.email || 'No email'})` === label);
+                                setEditMemberUserId(matched ? String(matched.user_id) : '');
+                              }}
+                            >
+                              <ComboboxInput placeholder="Select member" className="w-full" />
+                              <ComboboxContent>
+                                <ComboboxEmpty>No member found.</ComboboxEmpty>
+                                <ComboboxList>
+                                  {(item) => (
+                                    <ComboboxItem key={item} value={item}>
+                                      {item}
+                                    </ComboboxItem>
+                                  )}
+                                </ComboboxList>
+                              </ComboboxContent>
+                            </Combobox>
                           </div>
                           <div className="space-y-2">
                             <Label>New Work Role</Label>
@@ -1342,29 +1923,139 @@ const ProjectManagementCenter = () => {
                         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                           <div className="space-y-2 md:col-span-3">
                             <Label>Select Member to Remove</Label>
-                            <Select value={removeMemberUserId} onValueChange={setRemoveMemberUserId}>
-                              <SelectTrigger>
-                                <SelectValue placeholder="Select member" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {projectMembers.map(member => (
-                                  <SelectItem key={member.user_id} value={member.user_id}>
-                                    {member.name} ({member.email || 'No email'})
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                            <Combobox
+                              items={projectMembers.map((m) => `${m.name} (${m.email || 'No email'})`)}
+                              value={
+                                removeMemberUserId
+                                  ? (() => {
+                                      const m = projectMembers.find((x) => String(x.user_id) === String(removeMemberUserId));
+                                      return m ? `${m.name} (${m.email || 'No email'})` : '';
+                                    })()
+                                  : ''
+                              }
+                              onValueChange={(label) => {
+                                const matched = projectMembers.find((m) => `${m.name} (${m.email || 'No email'})` === label);
+                                setRemoveMemberUserId(matched ? String(matched.user_id) : '');
+                              }}
+                            >
+                              <ComboboxInput placeholder="Select member" className="w-full" />
+                              <ComboboxContent>
+                                <ComboboxEmpty>No member found.</ComboboxEmpty>
+                                <ComboboxList>
+                                  {(item) => (
+                                    <ComboboxItem key={item} value={item}>
+                                      {item}
+                                    </ComboboxItem>
+                                  )}
+                                </ComboboxList>
+                              </ComboboxContent>
+                            </Combobox>
                           </div>
                           <div className="space-y-2 flex items-end">
-                            <Button onClick={handleRemoveMember} variant="destructive" className="w-full" disabled={!removeMemberUserId}>
+                            <Button onClick={openRemoveMemberConfirm} variant="destructive" className="w-full" disabled={!removeMemberUserId}>
                               <Trash2 className="h-4 w-4 mr-2" />
                               Remove
                             </Button>
+                            <Drawer open={removeMemberConfirmDrawerOpen} onOpenChange={setRemoveMemberConfirmDrawerOpen}>
+                              <DrawerContent>
+                                <DrawerHeader>
+                                  <DrawerTitle>Are you sure you want to remove this member?</DrawerTitle>
+                                  <DrawerDescription>
+                                    This will remove {removeMemberDisplayName || 'the selected member'} from project {selectedProjectName || selectedProjectId}.
+                                  </DrawerDescription>
+                                </DrawerHeader>
+                                <DrawerFooter className="items-center">
+                                  <Button variant="destructive" onClick={handleRemoveMember} className="w-[70vw] max-w-[720px]">
+                                    Confirm Remove
+                                  </Button>
+                                  <DrawerClose asChild>
+                                    <Button variant="outline" className="w-[70vw] max-w-[720px]">Cancel</Button>
+                                  </DrawerClose>
+                                </DrawerFooter>
+                              </DrawerContent>
+                            </Drawer>
                           </div>
                         </div>
                       </div>
                     </>
                   )}
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <CalendarIcon className="h-5 w-5" />
+                    Update Weekoff for Users
+                  </CardTitle>
+                  <CardDescription>
+                    Select a user and update weekoff days.
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Select User</Label>
+                      <Combobox
+                        items={userOptions.map((u) => u.displayName)}
+                        value={
+                          weekoffUpdateUserId
+                            ? (userOptions.find((u) => String(u.id) === String(weekoffUpdateUserId))?.displayName || '')
+                            : ''
+                        }
+                        onValueChange={(display) => {
+                          const matched = userOptions.find((u) => u.displayName === display);
+                          setWeekoffUpdateUserId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select user" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No user found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Weekoff Days</Label>
+                      <Combobox
+                        multiple
+                        items={WEEKOFF_OPTIONS}
+                        value={weekoffUpdateValues}
+                        onValueChange={setWeekoffUpdateValues}
+                      >
+                        <ComboboxInput
+                          placeholder="Select weekoff day(s)"
+                          disabled={!weekoffUpdateUserId}
+                          className="w-full"
+                        />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No day found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(day) => (
+                              <ComboboxItem key={day} value={day}>
+                                {day}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
+                      <p className="text-xs text-muted-foreground">
+                        {weekoffUpdateValues.length > 0
+                          ? `Selected: ${weekoffUpdateValues.join(', ')}`
+                          : 'No weekoff selected'}
+                      </p>
+                    </div>
+                  </div>
+                  <Button onClick={handleUpdateUserWeekoff} disabled={!weekoffUpdateUserId}>
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Update Weekoff
+                  </Button>
                 </CardContent>
               </Card>
             </>
@@ -1400,33 +2091,53 @@ const ProjectManagementCenter = () => {
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                     <div className="space-y-2">
                       <Label>Select User</Label>
-                      <Select value={qaSelectedUserId} onValueChange={setQaSelectedUserId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select User" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {qaUserOptions.map(user => (
-                            <SelectItem key={user.id} value={user.id}>
-                              {user.displayName}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Combobox
+                        items={qaUserOptions.map((u) => u.displayName)}
+                        value={
+                          qaSelectedUserId
+                            ? (qaUserOptions.find((u) => String(u.id) === String(qaSelectedUserId))?.displayName || '')
+                            : ''
+                        }
+                        onValueChange={(display) => {
+                          const matched = qaUserOptions.find((u) => u.displayName === display);
+                          setQaSelectedUserId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select user" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No user found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
                     </div>
                     <div className="space-y-2">
                       <Label>Select Project</Label>
-                      <Select value={qaSelectedProjectId} onValueChange={setQaSelectedProjectId}>
-                        <SelectTrigger>
-                          <SelectValue placeholder="Select Project" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {projects.map(project => (
-                            <SelectItem key={project.id} value={project.id}>
-                              {project.name}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Combobox
+                        items={projects.map((p) => p.name)}
+                        value={qaSelectedProjectId ? (projects.find((p) => String(p.id) === String(qaSelectedProjectId))?.name || '') : ''}
+                        onValueChange={(name) => {
+                          const matched = projects.find((p) => p.name === name);
+                          setQaSelectedProjectId(matched?.id || '');
+                        }}
+                      >
+                        <ComboboxInput placeholder="Select project" className="w-full" />
+                        <ComboboxContent>
+                          <ComboboxEmpty>No project found.</ComboboxEmpty>
+                          <ComboboxList>
+                            {(item) => (
+                              <ComboboxItem key={item} value={item}>
+                                {item}
+                              </ComboboxItem>
+                            )}
+                          </ComboboxList>
+                        </ComboboxContent>
+                      </Combobox>
                     </div>
                     <div className="space-y-2">
                       <Label>Assessment Date</Label>
@@ -1646,6 +2357,475 @@ const ProjectManagementCenter = () => {
                   </Button>
                 </div>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="users" className="space-y-8">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                User Management
+              </CardTitle>
+              <CardDescription>
+                Add users, upload in bulk, and manage existing profiles with a cleaner workflow.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-8">
+              <Tabs value={userMgmtAction} onValueChange={setUserMgmtAction} className="space-y-6">
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="add">Add Users</TabsTrigger>
+                  <TabsTrigger value="search">Search & Edit</TabsTrigger>
+                </TabsList>
+
+                <TabsContent value="add" className="space-y-6">
+                  <Card className="border-dashed">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Create Users</CardTitle>
+                      <CardDescription>Choose single entry or CSV-based onboarding.</CardDescription>
+                    </CardHeader>
+                    <CardContent>
+                      <Tabs value={addUserMethod} onValueChange={setAddUserMethod} className="space-y-6">
+                        <TabsList className="grid w-full grid-cols-2">
+                          <TabsTrigger value="single">Single User</TabsTrigger>
+                          <TabsTrigger value="bulk">Bulk CSV Upload</TabsTrigger>
+                        </TabsList>
+
+                        <TabsContent value="single" className="space-y-6">
+                          <div className="space-y-3">
+                            <h4 className="text-sm font-medium">Core Details</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-6">
+                              <div className="space-y-2">
+                                <Label>Email *</Label>
+                                <Input value={newUserEmail} onChange={(e) => setNewUserEmail(e.target.value)} placeholder="user@example.com" />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Name *</Label>
+                                <Input value={newUserName} onChange={(e) => setNewUserName(e.target.value)} placeholder="John Doe" />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <h4 className="text-sm font-medium">Role & Assignment</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                              <div className="space-y-2">
+                                <Label>Role</Label>
+                                <Select value={newUserRole} onValueChange={setNewUserRole}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    {USER_ROLE_OPTIONS.map((role) => (
+                                      <SelectItem key={role} value={role}>{role}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Date of Joining</Label>
+                                <Input type="date" value={newUserDoj} onChange={(e) => setNewUserDoj(e.target.value)} />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Default Shift</Label>
+                                <Select value={newUserShiftId || '__none__'} onValueChange={(value) => setNewUserShiftId(value === '__none__' ? '' : value)}>
+                                  <SelectTrigger><SelectValue /></SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="__none__">-- Select Shift --</SelectItem>
+                                    {shiftOptions.map((shift) => (
+                                      <SelectItem key={shift.id} value={shift.id}>{shift.label}</SelectItem>
+                                    ))}
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                              <div className="space-y-2">
+                                <Label>Reporting Manager (RPM)</Label>
+                                <Combobox
+                                  items={['-- Select Manager --', ...managerOptions.map((m) => m.label)]}
+                                  value={
+                                    newUserRpmId
+                                      ? (managerOptions.find((m) => String(m.id) === String(newUserRpmId))?.label || '')
+                                      : '-- Select Manager --'
+                                  }
+                                  onValueChange={(label) => {
+                                    if (label === '-- Select Manager --') {
+                                      setNewUserRpmId('');
+                                      return;
+                                    }
+                                    const matched = managerOptions.find((m) => m.label === label);
+                                    setNewUserRpmId(matched ? String(matched.id) : '');
+                                  }}
+                                >
+                                  <ComboboxInput placeholder="Select manager" className="w-full" />
+                                  <ComboboxContent>
+                                    <ComboboxEmpty>No manager found.</ComboboxEmpty>
+                                    <ComboboxList>
+                                      {(item) => (
+                                        <ComboboxItem key={item} value={item}>
+                                          {item}
+                                        </ComboboxItem>
+                                      )}
+                                    </ComboboxList>
+                                  </ComboboxContent>
+                                </Combobox>
+                              </div>
+                              <div className="space-y-2 md:col-span-2">
+                                <Label>Weekoffs</Label>
+                                <Combobox
+                                  multiple
+                                  items={WEEKOFF_OPTIONS}
+                                  value={newUserWeekoffs}
+                                  onValueChange={setNewUserWeekoffs}
+                                >
+                                  <ComboboxInput placeholder="Select weekoff day(s)" className="w-full" />
+                                  <ComboboxContent>
+                                    <ComboboxEmpty>No day found.</ComboboxEmpty>
+                                    <ComboboxList>
+                                      {(day) => (
+                                        <ComboboxItem key={day} value={day}>
+                                          {day}
+                                        </ComboboxItem>
+                                      )}
+                                    </ComboboxList>
+                                  </ComboboxContent>
+                                </Combobox>
+                                <p className="text-xs text-muted-foreground">
+                                  {newUserWeekoffs.length > 0
+                                    ? `Selected: ${newUserWeekoffs.join(', ')}`
+                                    : 'No weekoff selected'}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-3">
+                            <h4 className="text-sm font-medium">Optional Metadata</h4>
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                              <div className="space-y-2">
+                                <Label>Work Role</Label>
+                                <Input value={newUserWorkRole} onChange={(e) => setNewUserWorkRole(e.target.value)} placeholder="Optional" />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Soul ID</Label>
+                                <Input value={newUserSoulId} onChange={(e) => setNewUserSoulId(e.target.value)} placeholder="Optional UUID" />
+                              </div>
+                              <div className="space-y-2">
+                                <Label>Quality Rating</Label>
+                                <Input value={newUserQualityRating} onChange={(e) => setNewUserQualityRating(e.target.value)} placeholder="Optional" />
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex justify-end">
+                            <Button onClick={handleAddSingleUser}>
+                              <Plus className="h-4 w-4 mr-2" />
+                              Add User
+                            </Button>
+                          </div>
+                        </TabsContent>
+
+                        <TabsContent value="bulk" className="space-y-6">
+                          <Alert>
+                            <Info className="h-4 w-4" />
+                            <AlertDescription>
+                              <div className="space-y-2">
+                                <div className="text-sm">Required fields:</div>
+                                <div className="flex flex-wrap gap-2">
+                                  <Badge variant="outline">email</Badge>
+                                  <Badge variant="outline">name</Badge>
+                                  <Badge variant="outline">role</Badge>
+                                </div>
+                                <div className="text-sm">
+                                  Optional: doj, work_role, weekoffs, shift_name, rpm_email, soul_id, quality_rating
+                                </div>
+                              </div>
+                            </AlertDescription>
+                          </Alert>
+                          <input
+                            ref={usersFileInputRef}
+                            id="users-csv-upload"
+                            type="file"
+                            accept=".csv"
+                            onChange={handleUsersFileUpload}
+                            className="hidden"
+                          />
+                          <div className="flex items-center gap-3">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              onClick={() => usersFileInputRef.current?.click()}
+                            >
+                              <Upload className="h-4 w-4 mr-2" />
+                              Select CSV File
+                            </Button>
+                            <span className="text-sm text-muted-foreground truncate">
+                              {usersUploadFile ? usersUploadFile.name : 'No file selected'}
+                            </span>
+                          </div>
+                          {usersCsvPreview && usersCsvPreview.length > 0 && (
+                            <div className="rounded-md border overflow-auto max-h-[320px]">
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    {Object.keys(usersCsvPreview[0]).map((key) => (
+                                      <TableHead key={key}>{key}</TableHead>
+                                    ))}
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {usersCsvPreview.map((row, idx) => (
+                                    <TableRow key={idx}>
+                                      {Object.values(row).map((value, valueIdx) => (
+                                        <TableCell key={valueIdx}>{String(value)}</TableCell>
+                                      ))}
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            </div>
+                          )}
+                          {usersUploadErrors.length > 0 && (
+                            <Card className="border-destructive/30">
+                              <CardHeader className="pb-2">
+                                <CardTitle className="text-sm text-destructive">Upload Errors</CardTitle>
+                              </CardHeader>
+                              <CardContent className="space-y-2 max-h-[220px] overflow-auto">
+                                {usersUploadErrors.map((error, idx) => (
+                                  <p key={idx} className="text-sm text-destructive">{error}</p>
+                                ))}
+                              </CardContent>
+                            </Card>
+                          )}
+                          <div className="flex justify-end">
+                            <Button onClick={handleBulkUploadUsers} disabled={!usersUploadFile || uploading}>
+                              {uploading ? <RefreshCw className="h-4 w-4 mr-2 animate-spin" /> : <Upload className="h-4 w-4 mr-2" />}
+                              Upload Users
+                            </Button>
+                          </div>
+                        </TabsContent>
+                      </Tabs>
+                    </CardContent>
+                  </Card>
+                </TabsContent>
+
+                <TabsContent value="search" className="space-y-6">
+                  <Card className="border-dashed">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-base">Find Users</CardTitle>
+                      <CardDescription>Filter users, select one profile, then update details.</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-6">
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                        <div className="space-y-2">
+                          <Label>Search by Name</Label>
+                          <Input value={userSearchName} onChange={(e) => setUserSearchName(e.target.value)} placeholder="Enter name..." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Search by Email</Label>
+                          <Input value={userSearchEmail} onChange={(e) => setUserSearchEmail(e.target.value)} placeholder="Enter email..." />
+                        </div>
+                        <div className="space-y-2">
+                          <Label>Active Status</Label>
+                          <Select value={userSearchActive} onValueChange={setUserSearchActive}>
+                            <SelectTrigger><SelectValue /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="All">All</SelectItem>
+                              <SelectItem value="Active Only">Active Only</SelectItem>
+                              <SelectItem value="Inactive Only">Inactive Only</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Select User</Label>
+                        <Combobox
+                          items={searchedUsers.map((u) => `${u.name} (${u.email}) - ${u.is_active ? 'Active' : 'Inactive'}`)}
+                          value={
+                            selectedEditUserId
+                              ? (() => {
+                                  const u = searchedUsers.find((x) => String(x.id) === String(selectedEditUserId));
+                                  return u ? `${u.name} (${u.email}) - ${u.is_active ? 'Active' : 'Inactive'}` : '';
+                                })()
+                              : ''
+                          }
+                          onValueChange={(label) => {
+                            const matched = searchedUsers.find((u) => `${u.name} (${u.email}) - ${u.is_active ? 'Active' : 'Inactive'}` === label);
+                            setSelectedEditUserId(matched ? String(matched.id) : '');
+                          }}
+                        >
+                          <ComboboxInput placeholder="Select user" className="w-full" />
+                          <ComboboxContent>
+                            <ComboboxEmpty>No user found.</ComboboxEmpty>
+                            <ComboboxList>
+                              {(item) => (
+                                <ComboboxItem key={item} value={item}>
+                                  {item}
+                                </ComboboxItem>
+                              )}
+                            </ComboboxList>
+                          </ComboboxContent>
+                        </Combobox>
+                      </div>
+                    </CardContent>
+                  </Card>
+
+                  {selectedEditUserId && (
+                    <Card>
+                      <CardHeader>
+                        <CardTitle className="text-base">Edit User Profile</CardTitle>
+                        <CardDescription>Update fields and save changes.</CardDescription>
+                      </CardHeader>
+                      <CardContent className="space-y-6">
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-medium">Core Details</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-x-4 gap-y-6">
+                            <div className="space-y-2">
+                              <Label>Email *</Label>
+                              <Input value={editUserForm.email} onChange={(e) => setEditUserForm((prev) => ({ ...prev, email: e.target.value }))} />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Name *</Label>
+                              <Input value={editUserForm.name} onChange={(e) => setEditUserForm((prev) => ({ ...prev, name: e.target.value }))} />
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-medium">Role & Assignment</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                            <div className="space-y-2">
+                              <Label>Role</Label>
+                              <Select value={String(editUserForm.role || 'USER')} onValueChange={(value) => setEditUserForm((prev) => ({ ...prev, role: value }))}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {USER_ROLE_OPTIONS.map((role) => (
+                                    <SelectItem key={role} value={role}>{role}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Date of Joining</Label>
+                              <Input type="date" value={editUserForm.doj || ''} onChange={(e) => setEditUserForm((prev) => ({ ...prev, doj: e.target.value }))} />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Date of Leaving (Optional)</Label>
+                              <Input type="date" value={editUserForm.dol || ''} onChange={(e) => setEditUserForm((prev) => ({ ...prev, dol: e.target.value }))} />
+                            </div>
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                            <div className="space-y-2">
+                              <Label>Default Shift</Label>
+                              <Select value={editUserForm.default_shift_id || '__none__'} onValueChange={(value) => setEditUserForm((prev) => ({ ...prev, default_shift_id: value === '__none__' ? '' : value }))}>
+                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="__none__">-- Select Shift --</SelectItem>
+                                  {shiftOptions.map((shift) => (
+                                    <SelectItem key={shift.id} value={shift.id}>{shift.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Reporting Manager (RPM)</Label>
+                              <Combobox
+                                items={['-- Select Manager --', ...managerOptions.map((m) => m.label)]}
+                                value={
+                                  editUserForm.rpm_user_id
+                                    ? (managerOptions.find((m) => String(m.id) === String(editUserForm.rpm_user_id))?.label || '')
+                                    : '-- Select Manager --'
+                                }
+                                onValueChange={(label) => {
+                                  if (label === '-- Select Manager --') {
+                                    setEditUserForm((prev) => ({ ...prev, rpm_user_id: '' }));
+                                    return;
+                                  }
+                                  const matched = managerOptions.find((m) => m.label === label);
+                                  setEditUserForm((prev) => ({ ...prev, rpm_user_id: matched ? String(matched.id) : '' }));
+                                }}
+                              >
+                                <ComboboxInput placeholder="Select manager" className="w-full" />
+                                <ComboboxContent>
+                                  <ComboboxEmpty>No manager found.</ComboboxEmpty>
+                                  <ComboboxList>
+                                    {(item) => (
+                                      <ComboboxItem key={item} value={item}>
+                                        {item}
+                                      </ComboboxItem>
+                                    )}
+                                  </ComboboxList>
+                                </ComboboxContent>
+                              </Combobox>
+                            </div>
+                            <div className="space-y-2 flex items-end">
+                              <div className="flex items-center space-x-2">
+                                <Checkbox
+                                  id="edit-user-active"
+                                  checked={editUserForm.is_active}
+                                  onCheckedChange={(checked) => setEditUserForm((prev) => ({ ...prev, is_active: Boolean(checked) }))}
+                                />
+                                <Label htmlFor="edit-user-active">Is Active</Label>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="space-y-2">
+                            <Label>Weekoffs</Label>
+                            <Combobox
+                              multiple
+                              items={WEEKOFF_OPTIONS}
+                              value={editUserForm.weekoffs}
+                              onValueChange={(values) =>
+                                setEditUserForm((prev) => ({ ...prev, weekoffs: values }))
+                              }
+                            >
+                              <ComboboxInput placeholder="Select weekoff day(s)" className="w-full" />
+                              <ComboboxContent>
+                                <ComboboxEmpty>No day found.</ComboboxEmpty>
+                                <ComboboxList>
+                                  {(day) => (
+                                    <ComboboxItem key={day} value={day}>
+                                      {day}
+                                    </ComboboxItem>
+                                  )}
+                                </ComboboxList>
+                              </ComboboxContent>
+                            </Combobox>
+                            <p className="text-xs text-muted-foreground">
+                              {editUserForm.weekoffs.length > 0
+                                ? `Selected: ${editUserForm.weekoffs.join(', ')}`
+                                : 'No weekoff selected'}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="space-y-3">
+                          <h4 className="text-sm font-medium">Optional Metadata</h4>
+                          <div className="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-6">
+                            <div className="space-y-2">
+                              <Label>Work Role</Label>
+                              <Input value={editUserForm.work_role} onChange={(e) => setEditUserForm((prev) => ({ ...prev, work_role: e.target.value }))} />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Soul ID</Label>
+                              <Input value={editUserForm.soul_id} onChange={(e) => setEditUserForm((prev) => ({ ...prev, soul_id: e.target.value }))} />
+                            </div>
+                            <div className="space-y-2">
+                              <Label>Quality Rating</Label>
+                              <Input value={editUserForm.quality_rating} onChange={(e) => setEditUserForm((prev) => ({ ...prev, quality_rating: e.target.value }))} />
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex justify-end">
+                          <Button onClick={handleUpdateUser}>
+                            <CheckCircle2 className="h-4 w-4 mr-2" />
+                            Save Changes
+                          </Button>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  )}
+                </TabsContent>
+              </Tabs>
             </CardContent>
           </Card>
         </TabsContent>

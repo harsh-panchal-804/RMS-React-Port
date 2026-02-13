@@ -18,7 +18,7 @@ from app.models.user_project_history import UserProjectHistory
 from app.models.project_members import ProjectMember
 from app.models.user_quality import UserQuality, QualityRating
 from app.models.user import User
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 from uuid import UUID
 
 # Configure logger
@@ -62,7 +62,7 @@ def calculate_daily_productivity_for_project(project_id: UUID, calculation_date:
     ).filter(
         TimeHistory.project_id == project_id,
         TimeHistory.sheet_date == calculation_date,
-        TimeHistory.status == "APPROVED" 
+        cast(TimeHistory.status, String) == "APPROVED" 
     ).group_by(TimeHistory.user_id, User.name).all()
 
     if not daily_logs:
@@ -271,14 +271,14 @@ def calculate_all_projects_automatically():
                 TimeHistory.project_id == project.id,
                 TimeHistory.sheet_date >= dates_to_process[-1],
                 TimeHistory.sheet_date <= dates_to_process[0],
-                TimeHistory.status == "APPROVED"
+                cast(TimeHistory.status, String) == "APPROVED"
             ).count()
             
             pending_count = db.query(TimeHistory).filter(
                 TimeHistory.project_id == project.id,
                 TimeHistory.sheet_date >= dates_to_process[-1],
                 TimeHistory.sheet_date <= dates_to_process[0],
-                TimeHistory.status == "PENDING",
+                cast(TimeHistory.status, String) == "PENDING",
                 TimeHistory.clock_out_at.isnot(None)
             ).count()
             
@@ -294,7 +294,7 @@ def calculate_all_projects_automatically():
                     has_logs = db.query(TimeHistory).filter(
                         TimeHistory.project_id == project.id,
                         TimeHistory.sheet_date == calc_date,
-                        TimeHistory.status == "APPROVED",
+                        cast(TimeHistory.status, String) == "APPROVED",
                         TimeHistory.clock_out_at.isnot(None)  # Only completed sessions
                     ).first()
                     

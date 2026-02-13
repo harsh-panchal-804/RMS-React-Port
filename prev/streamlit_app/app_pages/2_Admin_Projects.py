@@ -1,9 +1,11 @@
 import streamlit as st
 import requests
+import os
 import pandas as pd
 import time
 from datetime import date, datetime, timedelta
 from role_guard import get_user_role
+from utils.timezone import today_ist
 
 def clear_team_stats_cache():
     """Clear caches related to team stats and project assignments.
@@ -21,9 +23,9 @@ role = get_user_role()
 if not role or role not in ["ADMIN", "MANAGER"]:
     st.error("Access denied. Admin or Manager role required.")
     st.stop()
-API_BASE_URL = "http://127.0.0.1:8000"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
-ROLE_OPTIONS = ["ANNOTATION", "QC", "LIVE_QC", "RETRO_QC", "PM", "APM", "RPM"]
+ROLE_OPTIONS = ["Panelist", "Quality Check", "Annotation", "Retro Quality Check", "Super Quality Check", "Proctoring", "Operations", "Training",]
 
 # --- HELPER FUNCTIONS ---
 # def authenticated_request(method, endpoint, data=None):
@@ -89,7 +91,7 @@ def authenticated_request(method, endpoint, data=None, uploaded_file=None, param
 st.title("🛠️ Project Management Center")
 st.markdown("---")
 
-tab1, tab2, tab3 = st.tabs(["📂 Manage Projects", "👥 Team Allocations", "⭐ Quality Assessment"])
+tab1, tab2, tab3, tab4 = st.tabs(["📂 Manage Projects", "👥 Team Allocations", "⭐ Quality Assessment", "👤 User Management"])
 
 # ==========================================
 # TAB 1
@@ -103,7 +105,7 @@ with tab1:
             new_code = c2.text_input("Project Code")
 
             c3, c4, c5 = st.columns(3)
-            new_start = c3.date_input("Start Date", value=date.today())
+            new_start = c3.date_input("Start Date", value=today_ist())
             new_end = c4.date_input("End Date (Optional)", value=None)
             is_active = c5.checkbox("Is Active?", value=True)
             
@@ -244,34 +246,53 @@ with tab1:
             axis=1,
         )
 
+        # Fetch all managers (ADMIN + MANAGER role) for the dropdown
+        all_managers = authenticated_request("GET", "/admin/users/project_managers") or []
+        manager_options = [f"{m['name']}" for m in all_managers]
+        manager_name_to_id = {m['name']: m['id'] for m in all_managers}
+        manager_id_to_name = {m['id']: m['name'] for m in all_managers}
+
         members_count = {}
-        pm_map = {}
+        owners_map = {}  # Maps project_id to list of owner names
+        owners_ids_map = {}  # Maps project_id to list of owner user_ids
 
         for p in projects_data:
+            # Get member count
             members = authenticated_request("GET", f"/admin/projects/{p['id']}/members") or []
             members_count[p["id"]] = len(members)
-            pm_list = [m["name"] for m in members if m["work_role"] in ["PM","APM"]]
-            pm_map[p["id"]] = ", ".join(pm_list)
+            
+            # Get project owners from project_owners table
+            owners = authenticated_request("GET", f"/admin/projects/{p['id']}/owners") or []
+            owner_names = [o.get("user_name", "Unknown") for o in owners]
+            owner_ids = [o.get("user_id") for o in owners]
+            owners_map[p["id"]] = owner_names
+            owners_ids_map[p["id"]] = owner_ids
 
         df["allocated_users"] = df["id"].map(members_count)
-        df["pm_apm"] = df["id"].map(pm_map)
+        df["pm_apm"] = df["id"].map(lambda x: owners_map.get(x, []))
 
         edit_df = df[['code','name','status','allocated_users','pm_apm','start_date','end_date','id']].copy()
         edit_df['start_date'] = pd.to_datetime(edit_df['start_date']).dt.date
         edit_df['end_date'] = pd.to_datetime(edit_df['end_date']).dt.date
 
+        # Convert pm_apm list to comma-separated string for display (read-only)
+        edit_df['pm_apm'] = edit_df['pm_apm'].apply(lambda x: ", ".join(x) if isinstance(x, list) else "")
+        
         edited_df = st.data_editor(
             edit_df,
             column_config={
                 "id": None,
                 "code": st.column_config.TextColumn("Code"),
                 "name": st.column_config.TextColumn("Name"),
-                "status": st.column_config.TextColumn("Status"),
-                "allocated_users": st.column_config.NumberColumn("Allocated Users"),
-                "pm_apm": st.column_config.TextColumn("PM / APM"),
                 "status": st.column_config.SelectboxColumn(
                     "Status",
                     options=["ACTIVE", "PAUSED", "COMPLETED"],
+                ),
+                "allocated_users": st.column_config.NumberColumn("Allocated Users", disabled=True),
+                "pm_apm": st.column_config.TextColumn(
+                    "PM / APM",
+                    help="Use the section below to assign PM/APM",
+                    disabled=True,  # Make it read-only
                 ),
                 "start_date": st.column_config.DateColumn("Start Date"),
                 "end_date": st.column_config.DateColumn("End Date")
@@ -280,8 +301,84 @@ with tab1:
             key="project_editor"
         )
 
+        # PM/APM Assignment Section (since ListColumn is read-only, we need a separate UI)
+        st.markdown("---")
+        st.markdown("### 👥 Assign PM / APM to Projects")
+        st.caption("Select a project and assign managers as owners")
+        
+        # Track previously selected project to detect changes
+        if "prev_pm_assign_project" not in st.session_state:
+            st.session_state.prev_pm_assign_project = None
+        
+        col_proj, col_managers = st.columns([1, 2])
+        
+        with col_proj:
+            project_options = {p["name"]: p["id"] for p in filtered_projects}
+            # Add a placeholder option for "Select a project"
+            project_names_list = ["-- Select a Project --"] + list(project_options.keys())
+            
+            selected_project_name = st.selectbox(
+                "Select Project",
+                options=project_names_list,
+                index=0,  # Default to placeholder
+                key="pm_assign_project"
+            )
+            
+            # Get project ID (None if placeholder selected)
+            selected_project_id = project_options.get(selected_project_name) if selected_project_name != "-- Select a Project --" else None
+        
+        with col_managers:
+            if selected_project_id:
+                # Check if project selection changed - if so, we need to update the multiselect
+                project_changed = st.session_state.prev_pm_assign_project != selected_project_id
+                
+                # Get current owners for this project
+                current_owner_ids = owners_ids_map.get(selected_project_id, [])
+                current_owner_names = [manager_id_to_name.get(oid, "") for oid in current_owner_ids if oid in manager_id_to_name]
+                
+                # Use a dynamic key that changes when project changes to force multiselect to reset
+                multiselect_key = f"pm_assign_managers_{selected_project_id}"
+                
+                selected_managers = st.multiselect(
+                    "Select PM / APM",
+                    options=manager_options,
+                    default=current_owner_names,
+                    key=multiselect_key,
+                    help="Select one or more managers to assign as project owners"
+                )
+                
+                # Update the previous project tracker
+                st.session_state.prev_pm_assign_project = selected_project_id
+            else:
+                st.info("👈 Please select a project first")
+                selected_managers = []
+        
+        col_btn, col_spacer = st.columns([1, 3])
+        with col_btn:
+            # Only show save button if a project is selected
+            if selected_project_id:
+                if st.button("💾 Save PM/APM Assignment", type="primary", use_container_width=True):
+                    # Convert selected names to user IDs
+                    selected_user_ids = [manager_name_to_id[name] for name in selected_managers if name in manager_name_to_id]
+                    
+                    # Call bulk update API
+                    response = authenticated_request(
+                        "PUT",
+                        f"/admin/projects/{selected_project_id}/owners/bulk",
+                        data={"user_ids": selected_user_ids, "work_role": "PM"}
+                    )
+                    
+                    if response:
+                        st.success(f"✅ PM/APM updated for {selected_project_name}! Added: {response.get('added', 0)}, Removed: {response.get('removed', 0)}")
+                        st.toast("PM/APM assignment saved")
+                        time.sleep(1)
+                        st.rerun()
+                    else:
+                        st.error("❌ Failed to update PM/APM assignment")
 
-        if st.button("💾 Save Changes", type="primary"):
+        st.markdown("---")
+
+        if st.button("💾 Save Project Changes", type="primary"):
             changes = st.session_state["project_editor"].get("edited_rows", {})
 
             for row_idx, updates in changes.items():
@@ -292,7 +389,7 @@ with tab1:
                 status_val = updates.get("status", original_row["status"])
 
                 if status_val == "COMPLETED" and not end_val:
-                    end_val = date.today()
+                    end_val = today_ist()
                 if status_val in ["ACTIVE", "PAUSED"]:
                     end_val = None
 
@@ -371,7 +468,7 @@ with tab2:
                         with col3:
                             assigned_from = st.date_input(
                                 "Assigned From",
-                                value=date.today(),
+                                value=today_ist(),
                                 key="add_member_from"
                             )
                         with col4:
@@ -702,7 +799,7 @@ with tab3:
             
             with col3:
                 # Date selection
-                selected_date = st.date_input("Assessment Date", value=date.today(), key="qa_date_pmc")
+                selected_date = st.date_input("Assessment Date", value=today_ist(), key="qa_date_pmc")
             
             # Quality rating
             col4, col5 = st.columns(2)
@@ -930,3 +1027,474 @@ with tab3:
             mime="text/csv",
             key="qa_template_pmc"
         )
+
+# ==========================================
+# TAB 4: USER MANAGEMENT
+# ==========================================
+with tab4:
+    st.subheader("User Management")
+    
+    # Fetch required data for dropdowns
+    @st.cache_data(ttl=300)
+    def fetch_shifts():
+        token = st.session_state.get("token")
+        if not token:
+            return []
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            res = requests.get(f"{API_BASE_URL}/admin/shifts/", headers=headers)
+            if res.status_code == 200:
+                return res.json()
+        except:
+            pass
+        return []
+    
+    @st.cache_data(ttl=300)
+    def fetch_managers_for_rpm():
+        token = st.session_state.get("token")
+        if not token:
+            return []
+        headers = {"Authorization": f"Bearer {token}"}
+        try:
+            res = requests.get(f"{API_BASE_URL}/admin/users/project_managers", headers=headers)
+            if res.status_code == 200:
+                return res.json()
+        except:
+            pass
+        return []
+    
+    shifts_data = fetch_shifts()
+    managers_data = fetch_managers_for_rpm()
+    
+    # Create lookup maps
+    shift_map = {s["name"]: s["id"] for s in shifts_data}
+    shift_id_to_name = {s["id"]: s["name"] for s in shifts_data}
+    manager_map = {f"{m['name']} ({m['email']})": m["id"] for m in managers_data}
+    manager_id_to_display = {m["id"]: f"{m['name']} ({m['email']})" for m in managers_data}
+    
+    WEEKOFF_OPTIONS = ["SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY"]
+    ROLE_OPTIONS_USER = ["USER", "MANAGER", "ADMIN"]
+    
+    # Two sections: Add User and Manage Users
+    user_section = st.radio("Select Action", ["➕ Add New User", "🔍 Search & Edit Users"], horizontal=True, key="user_mgmt_action")
+    
+    st.markdown("---")
+    
+    # ==========================================
+    # ADD NEW USER SECTION
+    # ==========================================
+    if user_section == "➕ Add New User":
+        st.markdown("### Add New User")
+        
+        # Sub-tabs for single user vs bulk upload
+        add_method = st.radio("Add Method", ["Single User", "Bulk Upload (CSV)"], horizontal=True, key="add_user_method")
+        
+        if add_method == "Single User":
+            with st.form("add_user_form", clear_on_submit=True):
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    new_user_email = st.text_input("Email *", placeholder="user@example.com")
+                    new_user_name = st.text_input("Name *", placeholder="John Doe")
+                    new_user_role = st.selectbox("Role *", ROLE_OPTIONS_USER, index=0)
+                    new_user_doj = st.date_input("Date of Joining", value=today_ist())
+                    new_user_shift = st.selectbox("Default Shift", ["-- Select Shift --"] + list(shift_map.keys()))
+                
+                with col2:
+                    new_user_rpm = st.selectbox("Reporting Manager (RPM)", ["-- Select Manager --"] + list(manager_map.keys()))
+                    new_user_weekoffs = st.multiselect("Weekoffs", WEEKOFF_OPTIONS, default=["SUNDAY"])
+                    new_user_work_role = st.text_input("Work Role", placeholder="e.g., CONTRACTOR, EMPLOYEE")
+                    new_user_soul_id = st.text_input("Soul ID", placeholder="Optional - UUID format")
+                    new_user_quality_rating = st.text_input("Quality Rating", placeholder="Optional")
+                
+                # Password field (not needed for Google OAuth)
+                st.text_input("Password", placeholder="Not needed (Google OAuth)", disabled=True)
+                
+                submitted = st.form_submit_button("➕ Add User", type="primary", use_container_width=True)
+                
+                if submitted:
+                    # Validation
+                    if not new_user_email or not new_user_name:
+                        st.error("Email and Name are required fields.")
+                    else:
+                        # Build payload
+                        payload = {
+                            "email": new_user_email.strip(),
+                            "name": new_user_name.strip(),
+                            "role": new_user_role,
+                            "doj": str(new_user_doj),
+                            "is_active": True,
+                            "weekoffs": new_user_weekoffs if new_user_weekoffs else ["SUNDAY"],
+                        }
+                        
+                        # Optional fields
+                        if new_user_shift and new_user_shift != "-- Select Shift --":
+                            payload["default_shift_id"] = shift_map[new_user_shift]
+                        
+                        if new_user_rpm and new_user_rpm != "-- Select Manager --":
+                            payload["rpm_user_id"] = manager_map[new_user_rpm]
+                        
+                        if new_user_work_role:
+                            payload["work_role"] = new_user_work_role.strip()
+                        
+                        if new_user_soul_id:
+                            payload["soul_id"] = new_user_soul_id.strip()
+                        
+                        if new_user_quality_rating:
+                            payload["quality_rating"] = new_user_quality_rating.strip()
+                        
+                        # Make API call
+                        result = authenticated_request("POST", "/admin/users/", data=payload)
+                        
+                        if result:
+                            st.success(f"✅ User '{new_user_name}' added successfully!")
+                            st.cache_data.clear()
+                            time.sleep(1)
+                            st.rerun()
+        
+        else:
+            # Bulk Upload Section
+            st.markdown("#### 📤 Bulk Upload Users via CSV")
+            
+            st.info("""
+            **CSV Format Requirements:**
+            - **Required columns:** `email`, `name`, `role`
+            - **Optional columns:** `doj`, `work_role`, `weekoffs`, `shift_name`, `rpm_email`, `soul_id`, `quality_rating`
+            - **Role values:** USER, MANAGER, ADMIN
+            - **Weekoffs:** Comma-separated days (e.g., "SUNDAY,SATURDAY")
+            - **Date format:** YYYY-MM-DD
+            """)
+            
+            # Download template
+            st.markdown("##### 📥 Download CSV Template")
+            template_data = {
+                "email": ["user1@example.com", "user2@example.com"],
+                "name": ["John Doe", "Jane Smith"],
+                "role": ["USER", "USER"],
+                "doj": [str(today_ist()), str(today_ist())],
+                "work_role": ["EMPLOYEE", "CONTRACTOR"],
+                "weekoffs": ["SUNDAY", "SUNDAY,SATURDAY"],
+                "shift_name": ["", ""],
+                "rpm_email": ["", ""],
+                "soul_id": ["", ""],
+                "quality_rating": ["", ""]
+            }
+            template_df = pd.DataFrame(template_data)
+            csv_template = template_df.to_csv(index=False).encode('utf-8')
+            
+            st.download_button(
+                label="📥 Download CSV Template",
+                data=csv_template,
+                file_name="users_bulk_upload_template.csv",
+                mime="text/csv",
+                key="users_bulk_template"
+            )
+            
+            st.markdown("---")
+            st.markdown("##### 📤 Upload CSV File")
+            
+            uploaded_file = st.file_uploader("Choose a CSV file", type=["csv"], key="users_bulk_upload")
+            
+            if uploaded_file is not None:
+                try:
+                    df = pd.read_csv(uploaded_file)
+                    
+                    # Validate required columns
+                    required_cols = ["email", "name", "role"]
+                    missing_cols = [col for col in required_cols if col not in df.columns]
+                    
+                    if missing_cols:
+                        st.error(f"❌ Missing required columns: {', '.join(missing_cols)}")
+                    else:
+                        st.markdown("##### Preview of Users to be Added")
+                        st.dataframe(df, use_container_width=True)
+                        
+                        st.markdown(f"**Total users to add: {len(df)}**")
+                        
+                        # Create reverse lookup maps
+                        shift_name_to_id = {s["name"]: s["id"] for s in shifts_data}
+                        manager_email_to_id = {m["email"]: m["id"] for m in managers_data}
+                        
+                        if st.button("📤 Upload Users", type="primary", key="btn_bulk_upload_users"):
+                            success_count = 0
+                            error_count = 0
+                            errors = []
+                            
+                            progress_bar = st.progress(0)
+                            status_text = st.empty()
+                            
+                            for idx, row in df.iterrows():
+                                progress = (idx + 1) / len(df)
+                                progress_bar.progress(progress)
+                                status_text.text(f"Processing {idx + 1}/{len(df)}: {row['email']}")
+                                
+                                try:
+                                    # Build payload
+                                    payload = {
+                                        "email": str(row["email"]).strip(),
+                                        "name": str(row["name"]).strip(),
+                                        "role": str(row["role"]).strip().upper(),
+                                        "is_active": True,
+                                    }
+                                    
+                                    # Handle DOJ
+                                    if "doj" in row and pd.notna(row["doj"]) and str(row["doj"]).strip():
+                                        payload["doj"] = str(row["doj"]).strip()
+                                    else:
+                                        payload["doj"] = str(today_ist())
+                                    
+                                    # Handle weekoffs
+                                    if "weekoffs" in row and pd.notna(row["weekoffs"]) and str(row["weekoffs"]).strip():
+                                        weekoffs_str = str(row["weekoffs"]).strip()
+                                        weekoffs_list = [w.strip().upper() for w in weekoffs_str.split(",")]
+                                        payload["weekoffs"] = weekoffs_list
+                                    else:
+                                        payload["weekoffs"] = ["SUNDAY"]
+                                    
+                                    # Handle work_role
+                                    if "work_role" in row and pd.notna(row["work_role"]) and str(row["work_role"]).strip():
+                                        payload["work_role"] = str(row["work_role"]).strip()
+                                    
+                                    # Handle shift_name -> default_shift_id
+                                    if "shift_name" in row and pd.notna(row["shift_name"]) and str(row["shift_name"]).strip():
+                                        shift_name = str(row["shift_name"]).strip()
+                                        if shift_name in shift_name_to_id:
+                                            payload["default_shift_id"] = shift_name_to_id[shift_name]
+                                    
+                                    # Handle rpm_email -> rpm_user_id
+                                    if "rpm_email" in row and pd.notna(row["rpm_email"]) and str(row["rpm_email"]).strip():
+                                        rpm_email = str(row["rpm_email"]).strip()
+                                        if rpm_email in manager_email_to_id:
+                                            payload["rpm_user_id"] = manager_email_to_id[rpm_email]
+                                    
+                                    # Handle soul_id
+                                    if "soul_id" in row and pd.notna(row["soul_id"]) and str(row["soul_id"]).strip():
+                                        payload["soul_id"] = str(row["soul_id"]).strip()
+                                    
+                                    # Handle quality_rating
+                                    if "quality_rating" in row and pd.notna(row["quality_rating"]) and str(row["quality_rating"]).strip():
+                                        payload["quality_rating"] = str(row["quality_rating"]).strip()
+                                    
+                                    # Make API call
+                                    result = authenticated_request("POST", "/admin/users/", data=payload)
+                                    
+                                    if result:
+                                        success_count += 1
+                                    else:
+                                        error_count += 1
+                                        errors.append(f"Row {idx + 1} ({row['email']}): API error")
+                                
+                                except Exception as e:
+                                    error_count += 1
+                                    errors.append(f"Row {idx + 1} ({row.get('email', 'unknown')}): {str(e)}")
+                            
+                            progress_bar.progress(1.0)
+                            status_text.text("Upload complete!")
+                            
+                            # Show results
+                            st.markdown("---")
+                            st.markdown("##### Upload Results")
+                            
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.success(f"✅ Successfully added: {success_count} users")
+                            with col2:
+                                if error_count > 0:
+                                    st.error(f"❌ Failed: {error_count} users")
+                            
+                            if errors:
+                                with st.expander("View Errors"):
+                                    for err in errors:
+                                        st.warning(err)
+                            
+                            if success_count > 0:
+                                st.cache_data.clear()
+                                st.info("Page will refresh in 2 seconds...")
+                                time.sleep(2)
+                                st.rerun()
+                
+                except Exception as e:
+                    st.error(f"❌ Error reading CSV file: {str(e)}")
+    
+    # ==========================================
+    # SEARCH & EDIT USERS SECTION
+    # ==========================================
+    else:
+        st.markdown("### Search & Edit Users")
+        
+        # Search filters
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            search_name = st.text_input("Search by Name", placeholder="Enter name...", key="user_search_name")
+        with col2:
+            search_email = st.text_input("Search by Email", placeholder="Enter email...", key="user_search_email")
+        with col3:
+            search_active = st.selectbox("Active Status", ["All", "Active Only", "Inactive Only"], key="user_search_active")
+        
+        # Fetch users based on search
+        @st.cache_data(ttl=60)
+        def search_users(name_filter, email_filter, active_filter):
+            token = st.session_state.get("token")
+            if not token:
+                return []
+            headers = {"Authorization": f"Bearer {token}"}
+            
+            params = {"limit": 100, "offset": 0}
+            if name_filter:
+                params["name"] = name_filter
+            if email_filter:
+                params["email"] = email_filter
+            if active_filter == "Active Only":
+                params["is_active"] = True
+            elif active_filter == "Inactive Only":
+                params["is_active"] = False
+            
+            try:
+                res = requests.get(f"{API_BASE_URL}/admin/users/", headers=headers, params=params)
+                if res.status_code == 200:
+                    return res.json()
+            except:
+                pass
+            return []
+        
+        if st.button("🔍 Search Users", key="btn_search_users"):
+            st.session_state.user_search_triggered = True
+        
+        if st.session_state.get("user_search_triggered", False):
+            users_list = search_users(search_name, search_email, search_active)
+            
+            if not users_list:
+                st.info("No users found matching the search criteria.")
+            else:
+                st.markdown(f"**Found {len(users_list)} user(s)**")
+                
+                # Display users in a selectable format
+                user_display_options = [f"{u['name']} ({u['email']}) - {'Active' if u['is_active'] else 'Inactive'}" for u in users_list]
+                user_id_map = {f"{u['name']} ({u['email']}) - {'Active' if u['is_active'] else 'Inactive'}": u for u in users_list}
+                
+                selected_user_display = st.selectbox(
+                    "Select a user to edit",
+                    ["-- Select User --"] + user_display_options,
+                    key="edit_user_select"
+                )
+                
+                if selected_user_display and selected_user_display != "-- Select User --":
+                    selected_user = user_id_map[selected_user_display]
+                    
+                    st.markdown("---")
+                    st.markdown(f"### Edit User: {selected_user['name']}")
+                    
+                    with st.form(f"edit_user_form_{selected_user['id']}", clear_on_submit=False):
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            edit_email = st.text_input("Email *", value=selected_user.get("email", ""))
+                            edit_name = st.text_input("Name *", value=selected_user.get("name", ""))
+                            
+                            # Role
+                            current_role = selected_user.get("role", "USER")
+                            if hasattr(current_role, 'value'):
+                                current_role = current_role.value
+                            role_index = ROLE_OPTIONS_USER.index(current_role) if current_role in ROLE_OPTIONS_USER else 0
+                            edit_role = st.selectbox("Role *", ROLE_OPTIONS_USER, index=role_index)
+                            
+                            # DOJ
+                            current_doj = selected_user.get("doj")
+                            if current_doj:
+                                if isinstance(current_doj, str):
+                                    current_doj = datetime.strptime(current_doj, "%Y-%m-%d").date()
+                            else:
+                                current_doj = today_ist()
+                            edit_doj = st.date_input("Date of Joining", value=current_doj)
+                            
+                            # DOL (Date of Leaving)
+                            current_dol = selected_user.get("dol")
+                            if current_dol:
+                                if isinstance(current_dol, str):
+                                    current_dol = datetime.strptime(current_dol, "%Y-%m-%d").date()
+                                edit_dol = st.date_input("Date of Leaving", value=current_dol)
+                            else:
+                                # Use a checkbox to enable DOL input when user is being deactivated
+                                edit_dol = st.date_input("Date of Leaving (Optional)", value=None)
+                            
+                            # Shift
+                            current_shift_id = selected_user.get("default_shift_id")
+                            current_shift_name = shift_id_to_name.get(current_shift_id, None) if current_shift_id else None
+                            shift_options = ["-- Select Shift --"] + list(shift_map.keys())
+                            shift_index = shift_options.index(current_shift_name) if current_shift_name in shift_options else 0
+                            edit_shift = st.selectbox("Default Shift", shift_options, index=shift_index)
+                            
+                            # Is Active toggle
+                            edit_is_active = st.checkbox("Is Active", value=selected_user.get("is_active", True))
+                            if not edit_is_active and not current_dol:
+                                st.caption("💡 Date of Leaving will be auto-set to today if left empty")
+                        
+                        with col2:
+                            # RPM
+                            current_rpm_id = selected_user.get("rpm_user_id")
+                            current_rpm_display = manager_id_to_display.get(current_rpm_id, None) if current_rpm_id else None
+                            rpm_options = ["-- Select Manager --"] + list(manager_map.keys())
+                            rpm_index = rpm_options.index(current_rpm_display) if current_rpm_display in rpm_options else 0
+                            edit_rpm = st.selectbox("Reporting Manager (RPM)", rpm_options, index=rpm_index)
+                            
+                            # Weekoffs
+                            current_weekoffs = selected_user.get("weekoffs", ["SUNDAY"])
+                            if current_weekoffs:
+                                # Handle enum values
+                                current_weekoffs = [w.value if hasattr(w, 'value') else w for w in current_weekoffs]
+                            else:
+                                current_weekoffs = ["SUNDAY"]
+                            edit_weekoffs = st.multiselect("Weekoffs", WEEKOFF_OPTIONS, default=current_weekoffs)
+                            
+                            edit_work_role = st.text_input("Work Role", value=selected_user.get("work_role", "") or "")
+                            edit_soul_id = st.text_input("Soul ID", value=str(selected_user.get("soul_id", "")) if selected_user.get("soul_id") else "")
+                            edit_quality_rating = st.text_input("Quality Rating", value=selected_user.get("quality_rating", "") or "")
+                        
+                        col_btn1, col_btn2 = st.columns(2)
+                        with col_btn1:
+                            update_submitted = st.form_submit_button("💾 Save Changes", type="primary", use_container_width=True)
+                        with col_btn2:
+                            # Deactivate/Activate button based on current status
+                            if edit_is_active:
+                                toggle_label = "🚫 Deactivate User"
+                            else:
+                                toggle_label = "✅ Activate User"
+                        
+                        if update_submitted:
+                            # Build update payload
+                            update_payload = {
+                                "email": edit_email.strip(),
+                                "name": edit_name.strip(),
+                                "role": edit_role,
+                                "doj": str(edit_doj),
+                                "is_active": edit_is_active,
+                                "weekoffs": edit_weekoffs if edit_weekoffs else ["SUNDAY"],
+                            }
+                            
+                            # Optional fields
+                            if edit_shift and edit_shift != "-- Select Shift --":
+                                update_payload["default_shift_id"] = shift_map[edit_shift]
+                            else:
+                                update_payload["default_shift_id"] = None
+                            
+                            if edit_rpm and edit_rpm != "-- Select Manager --":
+                                update_payload["rpm_user_id"] = manager_map[edit_rpm]
+                            else:
+                                update_payload["rpm_user_id"] = None
+                            
+                            update_payload["work_role"] = edit_work_role.strip() if edit_work_role else None
+                            update_payload["soul_id"] = edit_soul_id.strip() if edit_soul_id else None
+                            update_payload["quality_rating"] = edit_quality_rating.strip() if edit_quality_rating else None
+                            
+                            # DOL - only include if manually set (backend will auto-manage based on is_active)
+                            if edit_dol:
+                                update_payload["dol"] = str(edit_dol)
+                            
+                            # Make API call
+                            result = authenticated_request("PUT", f"/admin/users/{selected_user['id']}", data=update_payload)
+                            
+                            if result:
+                                st.success(f"✅ User '{edit_name}' updated successfully!")
+                                st.cache_data.clear()
+                                time.sleep(1)
+                                st.rerun()

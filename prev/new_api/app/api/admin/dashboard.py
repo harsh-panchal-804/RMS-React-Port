@@ -1,7 +1,7 @@
 # app/api/admin/dashboard.py
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 from datetime import date, datetime
 
 from app.db.session import get_db  # Use centralized get_db
@@ -112,7 +112,7 @@ def get_pending_approvals(
     """
     # Base query for pending items
     query = db.query(TimeHistory).filter(
-        TimeHistory.status == "PENDING",
+        cast(TimeHistory.status, String) == "PENDING",
         TimeHistory.clock_out_at != None
     )
     

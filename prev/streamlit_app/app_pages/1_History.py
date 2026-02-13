@@ -6,6 +6,7 @@ import os
 from datetime import datetime, timedelta, date
 from dotenv import load_dotenv
 from role_guard import setup_role_access
+from utils.timezone import today_ist, format_time_ist
 
 load_dotenv()
 
@@ -94,7 +95,7 @@ all_history = authenticated_request("GET", "/time/history") or []
 print(f"[History Page] Initial fetch returned {len(all_history)} records")
 
 # Default date = last day the user worked (latest sheet_date)
-default_date = date.today()
+default_date = today_ist()
 if all_history:
     try:
         df_all = pd.DataFrame(all_history)
@@ -287,18 +288,20 @@ if time_history:
         rename_map = {'sheet_date': 'Date', 'project_name': 'Project', 'work_role': 'Role', 'clock_in_at': 'In', 'clock_out_at': 'Out', 'hours': 'Hours', 'tasks_completed': 'Tasks', 'status': 'Status'}
         df_display.rename(columns={k: v for k, v in rename_map.items() if k in df_display.columns}, inplace=True)
         
-        # Format time
+        # Format time in IST
         for col in ['In', 'Out']:
             if col in df_display.columns:
-                try: df_display[col] = pd.to_datetime(df_display[col]).dt.strftime('%H:%M')
-                except: pass
+                try:
+                    df_display[col] = df_display[col].apply(lambda v: format_time_ist(v, "%H:%M") if v else "-")
+                except Exception:
+                    pass
 
         st.dataframe(df_display.drop(columns=['minutes_worked'] if 'minutes_worked' in df_display.columns else []), 
                      use_container_width=True, hide_index=True)
 
         # --- EXPORT ---
         csv_data = df_logs.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Report (CSV)", csv_data, f"user_report_{date.today()}.csv", "text/csv")
+        st.download_button("📥 Download Report (CSV)", csv_data, f"user_report_{today_ist()}.csv", "text/csv")
 
 else:
     st.info("📭 No work history found for this period. Start clocking in to track your time!")

@@ -1,11 +1,13 @@
 import streamlit as st
 import requests
 import pandas as pd
+import os
 from datetime import date
 from role_guard import get_user_role
+from utils.timezone import today_ist
 
 # --- CONFIG ---
-API_URL = "http://127.0.0.1:8000"
+API_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000")
 
 st.set_page_config(page_title="Analytics Engine", layout="wide")
 
@@ -49,7 +51,7 @@ with col1:
     project_id = project_options[selected_project_name]
 
 with col2:
-    selected_date = st.date_input("Analysis Date", date.today())
+    selected_date = st.date_input("Analysis Date", today_ist())
 
 with col3:
     st.write("##") # Spacer

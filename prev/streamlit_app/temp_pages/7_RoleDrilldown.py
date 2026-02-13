@@ -3,6 +3,7 @@ import pandas as pd
 from api import api_request
 from datetime import date
 from role_guard import setup_role_access
+from utils.timezone import today_ist
 
 st.set_page_config(page_title="Role Drilldown", layout="wide")
 setup_role_access(__file__)
@@ -30,7 +31,7 @@ with col3:
     status = st.selectbox("Status", ["", "PRESENT", "ABSENT", "LEAVE", "UNKNOWN"])
 
 with col4:
-    report_date = st.date_input("Date", value=date.today())
+    report_date = st.date_input("Date", value=today_ist())
 
 fetch = st.button("Fetch Data")
 

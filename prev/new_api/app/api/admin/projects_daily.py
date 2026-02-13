@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 from datetime import date
 from uuid import UUID
 
@@ -35,7 +35,7 @@ def calculate_daily_metrics(
     ).filter(
         TimeHistory.project_id == payload.project_id,
         TimeHistory.sheet_date == payload.target_date,
-        TimeHistory.status == "APPROVED"  # Only count approved time sheets
+        cast(TimeHistory.status, String) == "APPROVED"  # Only count approved time sheets
     ).group_by(TimeHistory.work_role).all()
 
     saved_metrics = []

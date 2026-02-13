@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, cast, String
 from datetime import date
 from uuid import UUID
 
@@ -35,7 +35,7 @@ def calculate_daily_productivity(
     ).filter(
         TimeHistory.project_id == project_id,
         TimeHistory.sheet_date == calculation_date,
-        TimeHistory.status == "APPROVED" 
+        cast(TimeHistory.status, String) == "APPROVED" 
     ).group_by(TimeHistory.user_id, User.name).all()
 
     if not daily_logs:

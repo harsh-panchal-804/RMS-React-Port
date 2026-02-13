@@ -4,6 +4,7 @@ from datetime import datetime, date, timedelta, time
 import pytz
 import pandas as pd
 from role_guard import get_user_role
+from utils.timezone import today_ist
 
 st.set_page_config(page_title="Leave/WFH Requests", layout="wide")
 
@@ -127,7 +128,7 @@ col_left, col_right = st.columns([1, 1])
 with col_left:
     # Calculate holidays taken (using cached data)
     st.markdown("### 📅 Holiday Summary")
-    current_date = date.today()
+    current_date = today_ist()
     current_year = current_date.year
     current_month = current_date.month
     
@@ -358,8 +359,8 @@ with col_left:
         with col_a:
             start_date = st.date_input(
                 "Start Date",
-                value=st.session_state.get("start_date_input", date.today()),
-                min_value=date.today(),
+                value=st.session_state.get("start_date_input", today_ist()),
+                min_value=today_ist(),
                 key="start_date_input",
             )
         with col_b:
