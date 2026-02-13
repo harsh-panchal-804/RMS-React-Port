@@ -1,176 +1,148 @@
-# React Portfolio Dashboard
+# React Port Dashboard
 
-A React-based dashboard application built with Vite for viewing productivity metrics and analytics.
+React + Vite frontend for admin and user productivity workflows, migrated from Streamlit.
+
+## Features
+
+### Role-Based Access (RBAC)
+
+- **ADMIN**
+  - Home
+  - Project Productivity Dashboard
+  - User Productivity Dashboard (**admin only**)
+  - Project Resource Allocation
+  - Time Sheet Approvals
+  - Attendance Approvals
+  - Admin Projects
+  - Reports Center
+- **MANAGER**
+  - Home
+  - Project Productivity Dashboard
+  - Project Resource Allocation
+  - Time Sheet Approvals
+  - Attendance Approvals
+  - Admin Projects
+  - Reports Center
+- **USER**
+  - Home (clock in/out workflow)
+  - Team stats
+  - Leave/WFH Requests
+  - History
+
+### UI
+
+- Built with shadcn + Tailwind-based components
+- Searchable comboboxes for project/user/weekoff selectors
+- Confirmation drawers/dialogs for destructive actions
+- Tables, filters, tabs, cards, and KPI blocks across pages
 
 ## Prerequisites
 
-- Node.js (v18 or higher recommended)
-- npm or yarn package manager
+- Node.js 18+
+- npm (or yarn/pnpm)
 
 ## Installation
 
-1. **Clone the repository** (if applicable) or navigate to the project directory:
-   ```bash
-   cd react_port
-   ```
+1. Go to project root:
 
-2. **Install dependencies**:
-   ```bash
-   npm install
-   ```
-   or
-   ```bash
-   yarn install
-   ```
+```bash
+cd react_port
+```
 
-3. **Create environment file**:
-   Create a `.env` file in the project root directory with the following content:
-   ```env
-   VITE_API_BASE_URL=your_api_base_url_here
-   VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=your-anon-key-here
-   ```
-   
-   Replace the placeholders with your actual values:
-   - `VITE_API_BASE_URL`: Your backend API base URL (e.g., `https://api.example.com` or `http://localhost:8000`)
-   - `VITE_SUPABASE_URL`: Your Supabase project URL
-   - `VITE_SUPABASE_ANON_KEY`: Your Supabase anonymous/public key
+2. Install dependencies:
 
-## Authentication
+```bash
+npm install
+```
 
-The application uses **Google OAuth** via Supabase for authentication. Users must sign in with their Google account to access the dashboard.
+## Environment Variables (`.env`)
 
-### Google OAuth Setup
+Create `.env` in project root:
 
-1. **Configure Supabase OAuth**:
-   - Go to your Supabase project dashboard
-   - Navigate to **Authentication** → **Providers**
-   - Enable **Google** provider
-   - Add your Google OAuth credentials (Client ID and Client Secret)
-   - Add your redirect URL (e.g., `http://localhost:5173` for development)
+```env
+VITE_API_BASE_URL=https://your-backend-url
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-supabase-anon-key
+VITE_REDIRECT_URL=http://localhost:5173
+```
 
-2. **Sign In Flow**:
-   - When you open the application, you'll see a login page
-   - Click "Sign in with Google"
-   - You'll be redirected to Google to authenticate
-   - After successful authentication, you'll be redirected back to the application
-   - The application will automatically:
-     - Exchange the OAuth code for a Supabase session token
-     - Validate the token with your backend API
-     - Retrieve your user role from the backend
-     - Store the authentication state
+### Variable details
 
-3. **User Registration**:
-   - Users must be registered in your backend database
-   - If a user authenticates with Google but their email is not in the database, they will see an "Access denied" message
-   - Contact your administrator to add your email to the system
+- `VITE_API_BASE_URL`: backend base URL (FastAPI/ngrok/local)
+- `VITE_SUPABASE_URL`: Supabase project URL
+- `VITE_SUPABASE_ANON_KEY`: Supabase public anon key
+- `VITE_REDIRECT_URL` (optional): OAuth callback target; if omitted, app uses current origin/path
 
-### Logging Out
+## Run
 
-- Click the **Settings** icon in the top-right corner
-- Select **Log out** from the dropdown menu
-- This will clear your session and redirect you to the login page
+### Development
 
-## Running the Application
-
-### Development Mode
-
-Start the development server:
 ```bash
 npm run dev
 ```
-or
-```bash
-yarn dev
-```
 
-The application will be available at `http://localhost:5173` (or the port shown in the terminal).
+App runs on `http://localhost:5173` by default.
 
-### Building for Production
+### Production build
 
-Create a production build:
 ```bash
 npm run build
-```
-or
-```bash
-yarn build
-```
-
-The built files will be in the `dist` directory.
-
-### Preview Production Build
-
-Preview the production build locally:
-```bash
 npm run preview
 ```
-or
-```bash
-yarn preview
-```
+
+## Authentication Flow
+
+- Login uses Google OAuth via Supabase.
+- On sign-in, app exchanges OAuth code and calls backend `/me` to sync role.
+- Role controls sidebar and route behavior.
+- If user email is not present in backend DB, access is denied.
+
+## Backend Endpoint Expectations
+
+The frontend expects these key endpoints (non-exhaustive):
+
+- Auth/Profile: `GET /me`, `GET /me/`
+- User home time tracking:
+  - `GET /time/current`
+  - `GET /time/history?start_date=...&end_date=...`
+  - `POST /time/clock-in`
+  - `PUT /time/clock-out`
+- Requests:
+  - `GET /attendance/requests`
+  - `POST /attendance/requests/`
+  - `DELETE /attendance/requests/{id}`
+- Admin/reporting endpoints under `/admin/*` and `/reports/*`
+
+Note: user home intentionally uses `/time/current` + `/time/history` (not `/time/home`).
 
 ## Project Structure
 
-```
-react_port/
-├── src/
-│   ├── components/      # React components
-│   │   ├── Login.jsx    # Google OAuth login component
-│   │   └── ...
-│   ├── contexts/        # React contexts
-│   │   └── AuthContext.jsx  # Authentication context
-│   ├── lib/             # Library configurations
-│   │   └── supabase.js  # Supabase client configuration
-│   ├── utils/           # Utility functions (API, etc.)
-│   ├── assets/          # Static assets
-│   └── App.jsx          # Main application component
-├── public/              # Public assets
-├── .env                 # Environment variables (create this)
-├── vite.config.js       # Vite configuration
-└── package.json         # Dependencies and scripts
+```text
+src/
+  components/
+    Layout.jsx                 # Routing + role-aware sidebar
+    UserHome.jsx               # USER home (clock in/out)
+    AttendanceRequests.jsx     # Leave/WFH Requests
+    TeamStats.jsx              # Team stats
+    UserHistory.jsx            # History
+    Dashboard.jsx              # Admin project dashboard
+    UserDashboard.jsx          # Admin-only user dashboard
+    ...
+  contexts/
+    AuthContext.jsx            # Auth + role sync
+  utils/
+    api.js                     # API wrappers + request handling
 ```
 
 ## Troubleshooting
 
-### Authentication Issues
+- **401/403**: verify token validity and backend user registration.
+- **CORS/network issues**: verify `VITE_API_BASE_URL`, backend up status, and ngrok URL.
+- **OAuth redirect issues**: verify Supabase redirect URL list and `VITE_REDIRECT_URL`.
+- **Env not loading**: ensure `.env` is in root and restart dev server.
 
-- **"Access denied. Your email is not registered"**:
-  - Your Google account email is not in the backend database
-  - Contact your administrator to add your email to the system
+## Scripts
 
-- **"Could not generate login URL"**:
-  - Check that `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` are correctly set in your `.env` file
-  - Verify your Supabase project is active and Google OAuth is enabled
-
-- **OAuth redirect not working**:
-  - Ensure the redirect URL in Supabase matches your application URL (e.g., `http://localhost:5173`)
-  - Check that the redirect URL is added to your Supabase project's allowed redirect URLs
-
-### API Connection Issues
-
-- Verify your `.env` file contains the correct `VITE_API_BASE_URL`
-- Check that the API server is running and accessible
-- Review the browser console for detailed error messages
-- Ensure CORS is properly configured on the API server
-
-### Environment Variables Not Loading
-
-- Make sure the `.env` file is in the project root directory
-- Restart the development server after creating or modifying `.env`
-- Environment variables must start with `VITE_` to be accessible in the application
-
-## Technologies Used
-
-- React 19
-- Vite 7
-- Supabase (Authentication & OAuth)
-- Axios (HTTP client)
-- Tailwind CSS
-- Radix UI components
-- Recharts & Plotly.js (data visualization)
-- Framer Motion (animations)
-
-## License
-
-This project is private and proprietary.
+- `npm run dev` - start dev server
+- `npm run build` - production build
+- `npm run preview` - preview production build
