@@ -8,7 +8,7 @@ from app.db.session import get_db
 from app.db.async_compat import run_with_sync_session
 from app.models.attendance_request import AttendanceRequest
 from app.models.attendance_request_approval import AttendanceRequestApproval
-from app.models.attendance_daily import AttendanceDaily
+from app.models.attendance_daily import AttendanceDaily, AttendanceStatus
 from app.models.project import Project
 from app.schemas.attendance_request_approval import (
     AttendanceRequestApprovalCreate,
@@ -70,7 +70,7 @@ def create_approval(
             AttendanceDaily.attendance_date == request.start_date
         ).first()
 
-        new_status = "LEAVE" if request.request_type == "LEAVE" else "PRESENT" # WFH counts as Present usually
+        new_status = AttendanceStatus.LEAVE if request.request_type == "LEAVE" else AttendanceStatus.PRESENT # WFH counts as Present usually
         
         if not existing_daily:
             daily_record = AttendanceDaily(

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import or_, select
-from typing import Optional
+from typing import Optional, List
 from uuid import UUID
 from datetime import date
 from app.db.session import get_db  # Use centralized get_db
@@ -22,6 +22,11 @@ from pydantic import BaseModel
 
 class MemberRoleUpdate(BaseModel):
     work_role: str
+
+class BulkOwnersUpdate(BaseModel):
+    user_ids: List[UUID]
+    work_role: str = "PM"
+
 router = APIRouter(prefix="/admin/projects", tags=["Admin - Projects"])
 
 # ==========================================
@@ -297,6 +302,65 @@ def remove_project_owner(
 
     return {"message": "Owner removed successfully"}
 
+# --- BULK UPDATE OWNERS ---
+@router.put("/{project_id}/owners/bulk")
+@run_with_sync_session()
+def bulk_update_project_owners(
+    project_id: UUID,
+    payload: BulkOwnersUpdate,
+    db: Session = Depends(get_db)
+):
+    """
+    Replace all owners for a project with the provided list of user IDs.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    current_owners = db.query(ProjectOwner).filter(
+        ProjectOwner.project_id == project_id
+    ).all()
+    current_owner_ids = {o.user_id for o in current_owners}
+
+    new_owner_ids = set(payload.user_ids)
+    to_remove = current_owner_ids - new_owner_ids
+    to_add = new_owner_ids - current_owner_ids
+
+    if to_remove:
+        db.query(ProjectOwner).filter(
+            ProjectOwner.project_id == project_id,
+            ProjectOwner.user_id.in_(to_remove)
+        ).delete(synchronize_session=False)
+
+    for user_id in to_add:
+        user = db.query(User).filter(User.id == user_id).first()
+        if user:
+            db.add(ProjectOwner(
+                project_id=project_id,
+                user_id=user_id,
+                work_role=payload.work_role
+            ))
+
+    db.commit()
+
+    updated_owners = db.query(ProjectOwner).filter(
+        ProjectOwner.project_id == project_id
+    ).all()
+
+    owners = [{
+        "id": str(owner.id),
+        "project_id": str(owner.project_id),
+        "user_id": str(owner.user_id),
+        "user_name": owner.user.name if owner.user else "Unknown",
+        "work_role": owner.work_role,
+    } for owner in updated_owners]
+
+    return {
+        "message": "Owners updated successfully",
+        "owners": owners,
+        "added": len(to_add),
+        "removed": len(to_remove),
+    }
 
 # ==========================================
 #      PROJECT MEMBERS (WORKERS) APIs

@@ -1,21 +1,23 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import List, Optional
 import uuid
 from uuid import UUID
 from app.db.session import get_db  # Use centralized get_db
 from app.db.async_compat import run_with_sync_session
-from app.models.history import TimeHistory
+from app.models.history import TimeHistory, ApprovalStatus
 from app.models.project import Project
-from app.models.attendance_daily import AttendanceDaily
-from app.schemas.history import TimeHistoryResponse, ClockInRequest, ClockOutRequest
+from app.models.attendance_daily import AttendanceDaily, AttendanceStatus
+from app.schemas.history import TimeHistoryResponse, ClockInRequest, ClockOutRequest, HomeTimeResponse
 from app.core.dependencies import get_current_user
 from app.models.user import User
+from app.utils.timezone import now_ist, today_ist
 
 from app.schemas.history import ApprovalRequest
 
 router = APIRouter(prefix="/time", tags=["Time Tracking"])
+MAX_SESSION_DURATION = timedelta(hours=14)
 
 # --- 1. CLOCK IN ---
 @router.post("/clock-in", response_model=TimeHistoryResponse)
@@ -39,8 +41,8 @@ def clock_in(
 
     # Create new session
     # Note: sheet_date defaults to today, status defaults to 'PENDING'
-    clock_in_at = payload.clock_in_at or datetime.now()
-    today = date.today()
+    clock_in_at = payload.clock_in_at or now_ist()
+    today = today_ist()
     new_session = TimeHistory(
         user_id=current_user.id,
         project_id=payload.project_id,
@@ -48,7 +50,7 @@ def clock_in(
         clock_in_at=clock_in_at,
         sheet_date=today,
         tasks_completed=0,
-        status="PENDING" ,
+        status=ApprovalStatus.PENDING,
         
     )
     
@@ -70,8 +72,8 @@ def clock_in(
         logger.info(f"[CLOCK_IN] Found existing attendance record with status: {existing_attendance.status}")
         # Update existing record - only update status if it's not already set by a request (LEAVE/WFH)
         # Don't override LEAVE or WFH status that might have been set by attendance requests
-        if existing_attendance.status in ["UNKNOWN", "ABSENT"]:
-            existing_attendance.status = "PRESENT"
+        if existing_attendance.status in [AttendanceStatus.UNKNOWN, AttendanceStatus.ABSENT]:
+            existing_attendance.status = AttendanceStatus.PRESENT
             logger.info(f"[CLOCK_IN] Updated status to PRESENT")
         # Update project_id if it's different (user might have switched projects)
         if existing_attendance.project_id != payload.project_id:
@@ -85,7 +87,7 @@ def clock_in(
             user_id=current_user.id,
             project_id=payload.project_id,
             attendance_date=today,
-            status="PRESENT",
+            status=AttendanceStatus.PRESENT,
             first_clock_in_at=clock_in_at,
             source="CLOCK_IN",
             shift_id=current_user.default_shift_id
@@ -125,28 +127,32 @@ def clock_out(
             detail="No active session found. You must clock in first."
         )
 
-    # Update the session
-    clock_out_at = datetime.now()
+    # Cap manual clock-out time to 14 hours from clock in.
+    clock_out_at = min(now_ist(), active_session.clock_in_at + MAX_SESSION_DURATION)
     active_session.clock_out_at = clock_out_at
     active_session.tasks_completed = payload.tasks_completed
     active_session.notes = payload.notes
     
-    # Update AttendanceDaily record with clock out time
-    today = date.today()
+    # Calculate minutes worked from clock in to clock out
+    minutes_worked = (clock_out_at - active_session.clock_in_at).total_seconds() / 60
+    active_session.minutes_worked = round(minutes_worked, 2)
+    
+    # Update AttendanceDaily record with clock out time.
+    # Use session sheet_date instead of today in case of cross-date session handling.
     existing_attendance = db.query(AttendanceDaily).filter(
         AttendanceDaily.user_id == current_user.id,
         AttendanceDaily.project_id == active_session.project_id,
-        AttendanceDaily.attendance_date == today
+        AttendanceDaily.attendance_date == active_session.sheet_date
     ).first()
     
     if existing_attendance:
         existing_attendance.last_clock_out_at = clock_out_at
-        # Update minutes_worked if available from the session
-        if active_session.minutes_worked:
-            existing_attendance.minutes_worked = active_session.minutes_worked
+        existing_attendance.minutes_worked = active_session.minutes_worked
     
     db.commit()
     db.refresh(active_session)
+    if active_session.project:
+        active_session.project_name = active_session.project.name
     return active_session
 
 # --- 3. GET HISTORY ---
@@ -186,7 +192,7 @@ def approve_session(
     history_id: UUID,
     payload: ApprovalRequest,
     db: Session = Depends(get_db),
-    # current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ):
     # 1. Find the session
     session = db.query(TimeHistory).filter(TimeHistory.id == history_id).first()
@@ -195,17 +201,22 @@ def approve_session(
         raise HTTPException(status_code=404, detail="Timesheet not found")
 
     # 2. Update fields
-    # if session.user_id == current_user.id:
-    #     raise HTTPException(
-    #         status_code=403, 
-    #         detail="You cannot approve your own timesheet."
-    #     )
-    # --------------------------
+    if session.user_id == current_user.id:
+        raise HTTPException(
+            status_code=403, 
+            detail="You cannot approve your own timesheet."
+        )
     
-    session.status = payload.status
+    try:
+        session.status = ApprovalStatus(payload.status.upper())
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid status. Allowed values: PENDING, APPROVED, REJECTED."
+        )
     session.approval_comment = payload.approval_comment
-    session.approved_by_user_id = "087084fa-aff2-4c10-bb72-5b0c9963c4d5"
-    session.approved_at = datetime.now()
+    session.approved_by_user_id = current_user.id
+    session.approved_at = now_ist()
     
     db.commit()
     db.refresh(session)
@@ -257,3 +268,44 @@ def get_current_active_session(
         return active_session
     
     return None
+
+
+# --- 6. GET HOME DATA (current session + today's sessions in one call) ---
+@router.get("/home", response_model=HomeTimeResponse)
+@run_with_sync_session()
+def get_home_time_data(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Returns current active session (if any) and today's sessions in one request.
+    Reduces round-trips for the Home page after clock in/out.
+    """
+    today = today_ist()
+
+    # 1. Active session (clock_out_at IS NULL)
+    active_session = db.query(TimeHistory).filter(
+        TimeHistory.user_id == current_user.id,
+        TimeHistory.clock_out_at == None
+    ).first()
+    if active_session and active_session.project:
+        active_session.project_name = active_session.project.name
+
+    # 2. Today's sessions (single query)
+    today_sessions = (
+        db.query(TimeHistory)
+        .filter(
+            TimeHistory.user_id == current_user.id,
+            TimeHistory.sheet_date == today,
+        )
+        .order_by(TimeHistory.clock_in_at.desc())
+        .all()
+    )
+    for r in today_sessions:
+        if r.project:
+            r.project_name = r.project.name
+
+    return HomeTimeResponse(
+        current_session=active_session,
+        today_sessions=today_sessions,
+    )

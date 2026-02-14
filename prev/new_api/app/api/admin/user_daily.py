@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import Session
 from sqlalchemy import and_, or_, func, select
 from typing import List, Optional
 from uuid import UUID
@@ -7,6 +8,7 @@ from datetime import date, datetime
 from pydantic import BaseModel
 
 from app.db.session import get_db
+from app.db.async_compat import run_with_sync_session
 from app.models.user_daily_metrics import UserDailyMetrics
 from app.models.user_quality import UserQuality, QualityRating
 from app.models.user import User
@@ -100,6 +102,28 @@ async def get_daily_metrics(
         )
         for row in rows
     ]
+
+@router.post("/batch", response_model=List[UserDailyMetricsResponse])
+@run_with_sync_session()
+def get_daily_metrics_batch(
+    project_ids: List[UUID],
+    start_date: Optional[date] = None,
+    end_date: Optional[date] = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Batch endpoint to fetch metrics for multiple projects at once.
+    """
+    query = db.query(UserDailyMetrics).filter(
+        UserDailyMetrics.project_id.in_(project_ids)
+    )
+
+    if start_date:
+        query = query.filter(UserDailyMetrics.metric_date >= start_date)
+    if end_date:
+        query = query.filter(UserDailyMetrics.metric_date <= end_date)
+
+    return query.order_by(UserDailyMetrics.metric_date.desc()).all()
 
 from app.services.user_project_history_service import (
     sync_user_project_history,

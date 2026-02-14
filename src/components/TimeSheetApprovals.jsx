@@ -21,6 +21,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { LoaderThreeDemo } from './LoaderDemo';
 import {
   ClipboardCheck,
   Calendar as CalendarIcon,
@@ -48,6 +49,7 @@ const formatClockTime = (value) => {
 const TimeSheetApprovals = () => {
   const { user, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [projects, setProjects] = useState([]);
   const [pendingItems, setPendingItems] = useState([]);
@@ -85,7 +87,17 @@ const TimeSheetApprovals = () => {
   };
 
   useEffect(() => {
-    fetchData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await fetchData();
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   useEffect(() => {
@@ -250,6 +262,14 @@ const TimeSheetApprovals = () => {
           <Info className="h-4 w-4" />
           <AlertDescription>Access denied. Admin or Manager role required.</AlertDescription>
         </Alert>
+      </div>
+    );
+  }
+
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <LoaderThreeDemo />
       </div>
     );
   }
@@ -527,7 +547,7 @@ const TimeSheetApprovals = () => {
       )}
 
       <Dialog open={rowRejectDialogOpen} onOpenChange={setRowRejectDialogOpen}>
-        <DialogContent>
+        <DialogContent overlayClassName="backdrop-blur-sm">
           <DialogHeader>
             <DialogTitle>Reject Time Sheet</DialogTitle>
             <DialogDescription>Add an optional reason for rejection.</DialogDescription>
@@ -556,7 +576,7 @@ const TimeSheetApprovals = () => {
       </Dialog>
 
       <Dialog open={bulkRejectDialogOpen} onOpenChange={setBulkRejectDialogOpen}>
-        <DialogContent>
+        <DialogContent overlayClassName="backdrop-blur-sm">
           <DialogHeader>
             <DialogTitle>Bulk Reject Time Sheets</DialogTitle>
             <DialogDescription>

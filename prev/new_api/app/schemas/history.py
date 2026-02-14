@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime, date
-from typing import Optional
+from typing import List, Optional
 
 # 1. Clock In Request
 class ClockInRequest(BaseModel):
@@ -36,6 +36,14 @@ class TimeHistoryResponse(BaseModel):
     
     class Config:
         from_attributes = True
+
+
+class HomeTimeResponse(BaseModel):
+    """Combined response for Home page: current session + today's sessions in one call."""
+    current_session: Optional[TimeHistoryResponse] = None
+    today_sessions: List[TimeHistoryResponse] = []
+
+
 # Add this class to your existing file
 class ApprovalRequest(BaseModel):
     status: str  # Must be "APPROVED" or "REJECTED"

@@ -39,10 +39,12 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { LoaderThreeDemo } from './LoaderDemo';
 
 const ReportsCenter = () => {
   const { user, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   
   // Data states
@@ -107,7 +109,20 @@ const ReportsCenter = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await Promise.all([
+        fetchAllData(),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   const handleRefresh = async () => {
@@ -387,19 +402,6 @@ const ReportsCenter = () => {
     }
   };
 
-  if (!user || !['ADMIN', 'MANAGER'].includes(user.role)) {
-    return (
-      <div className="p-6">
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            Access denied. Admin or Manager role required.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   // User options with email
   const userOptions = useMemo(() => {
     return users.map(user => {
@@ -414,6 +416,23 @@ const ReportsCenter = () => {
       };
     }).sort((a, b) => a.name.localeCompare(b.name));
   }, [users]);
+
+  if (!user || !['ADMIN', 'MANAGER'].includes(user.role)) {
+    return (
+      <div className="p-6">
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Access denied. Admin or Manager role required.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (initialLoading) {
+    return <LoaderThreeDemo />;
+  }
 
   return (
     <div className="p-6 space-y-6">

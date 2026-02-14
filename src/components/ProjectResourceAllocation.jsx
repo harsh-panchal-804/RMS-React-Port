@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
-import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { BarChart, Bar, PieChart, Pie, Cell, XAxis, YAxis, CartesianGrid } from 'recharts';
 import {
   getAllProjects,
   getAllUsers,
@@ -32,6 +32,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart';
+import { LoaderThreeDemo } from './LoaderDemo';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 import {
   RefreshCw,
   Download,
@@ -87,6 +90,7 @@ const ProjectResourceAllocation = () => {
   const { user, token } = useAuth();
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [hoveredOverallIndex, setHoveredOverallIndex] = useState(null);
@@ -184,7 +188,17 @@ const ProjectResourceAllocation = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await fetchAllData();
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, [selectedDate, token]);
 
   const handleRefresh = async () => {
@@ -585,31 +599,39 @@ const ProjectResourceAllocation = () => {
     const hoursByRole = {};
     const tasksByRole = {};
     const projectRoleHeatmap = {};
+    allProjects.forEach((project) => {
+      const metricsRaw =
+        projectMetrics[project.id] ??
+        projectMetrics[String(project.id)] ??
+        [];
+      const metrics = Array.isArray(metricsRaw)
+        ? metricsRaw
+        : Array.isArray(metricsRaw?.data)
+        ? metricsRaw.data
+        : [];
 
-    Object.entries(projectMetrics).forEach(([projectId, metrics]) => {
-      const project = allProjects.find(p => p.id === projectId);
       const projectName = project?.name || 'Unknown';
-      
       let projHours = 0;
       let projTasks = 0;
-      
-      metrics.forEach(m => {
-        const hours = m.hours_worked || 0;
-        const tasks = m.tasks_completed || 0;
-        const role = m.work_role || 'Unknown';
-        
+
+      metrics.forEach((m) => {
+        const hours = Number(m?.hours_worked || 0);
+        const tasks = Number(m?.tasks_completed || 0);
+        const role = m?.work_role || 'Unknown';
+
         projHours += hours;
         projTasks += tasks;
-        
+
         hoursByRole[role] = (hoursByRole[role] || 0) + hours;
         tasksByRole[role] = (tasksByRole[role] || 0) + tasks;
-        
+
         if (!projectRoleHeatmap[projectName]) {
           projectRoleHeatmap[projectName] = {};
         }
-        projectRoleHeatmap[projectName][role] = (projectRoleHeatmap[projectName][role] || 0) + hours;
+        projectRoleHeatmap[projectName][role] =
+          (projectRoleHeatmap[projectName][role] || 0) + hours;
       });
-      
+
       if (projHours > 0 || projTasks > 0) {
         hoursByProject.push({ project: projectName, hours: projHours });
         tasksByProject.push({ project: projectName, tasks: projTasks });
@@ -625,6 +647,28 @@ const ProjectResourceAllocation = () => {
     };
   }, [projectMetrics, allProjects]);
 
+  const globalFiltersSignature = useMemo(
+    () => JSON.stringify({ selectedDate: format(selectedDate, 'yyyy-MM-dd') }),
+    [selectedDate]
+  );
+
+  const globalDataSignature = useMemo(() => {
+    const projectCount = allProjects.length;
+    const usersCount = usersData.length;
+    const metricsRowsCount = Object.values(projectMetrics).reduce(
+      (sum, rows) => sum + (Array.isArray(rows) ? rows.length : 0),
+      0
+    );
+    return `${projectCount}|${usersCount}|${metricsRowsCount}`;
+  }, [allProjects, usersData, projectMetrics]);
+
+  useFiltersUpdatedToast({
+    filtersSignature: globalFiltersSignature,
+    dataSignature: globalDataSignature,
+    enabled: !loading && !initialLoading && Boolean(token),
+    message: 'Filters updated',
+  });
+
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658'];
 
   if (!user || !['ADMIN', 'MANAGER'].includes(user.role)) {
@@ -636,6 +680,14 @@ const ProjectResourceAllocation = () => {
             Access denied. Admin or Manager role required.
           </AlertDescription>
         </Alert>
+      </div>
+    );
+  }
+
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <LoaderThreeDemo />
       </div>
     );
   }
@@ -947,6 +999,16 @@ const ProjectResourceAllocation = () => {
               <Skeleton className="h-64 w-full" />
               <Skeleton className="h-64 w-full" />
             </div>
+          ) : visualizationData.hoursByProject.length === 0 &&
+              visualizationData.tasksByProject.length === 0 &&
+              visualizationData.hoursByRole.length === 0 &&
+              visualizationData.tasksByRole.length === 0 ? (
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                No visualization data available for the selected date.
+              </AlertDescription>
+            </Alert>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               {/* Hours by Project */}
@@ -955,15 +1017,27 @@ const ProjectResourceAllocation = () => {
                   <CardTitle>Total Hours Worked by Project</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={visualizationData.hoursByProject}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="project" angle={-45} textAnchor="end" height={100} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="hours" fill="#0088FE" />
+                  <ChartContainer
+                    config={{
+                      project: { label: 'Project' },
+                      hours: { label: 'Hours', color: COLORS[0] },
+                    }}
+                    className="h-[360px] w-full"
+                  >
+                    <BarChart data={visualizationData.hoursByProject} margin={{ left: 12, right: 12, top: 12, bottom: 32 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="project" angle={-35} textAnchor="end" height={95} tickLine={false} axisLine={false} />
+                      <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => Number(value || 0).toFixed(2)} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => `${name}: ${Number(value || 0).toFixed(2)}`}
+                          />
+                        }
+                      />
+                      <Bar dataKey="hours" fill={COLORS[0]} radius={4} />
                     </BarChart>
-                  </ResponsiveContainer>
+                  </ChartContainer>
                 </CardContent>
               </Card>
 
@@ -973,15 +1047,27 @@ const ProjectResourceAllocation = () => {
                   <CardTitle>Total Tasks Completed by Project</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={visualizationData.tasksByProject}>
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="project" angle={-45} textAnchor="end" height={100} />
-                      <YAxis />
-                      <Tooltip />
-                      <Bar dataKey="tasks" fill="#00C49F" />
+                  <ChartContainer
+                    config={{
+                      project: { label: 'Project' },
+                      tasks: { label: 'Tasks', color: COLORS[1] },
+                    }}
+                    className="h-[360px] w-full"
+                  >
+                    <BarChart data={visualizationData.tasksByProject} margin={{ left: 12, right: 12, top: 12, bottom: 32 }}>
+                      <CartesianGrid vertical={false} />
+                      <XAxis dataKey="project" angle={-35} textAnchor="end" height={95} tickLine={false} axisLine={false} />
+                      <YAxis tickLine={false} axisLine={false} tickFormatter={(value) => Number(value || 0).toFixed(2)} />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => `${name}: ${Number(value || 0).toFixed(2)}`}
+                          />
+                        }
+                      />
+                      <Bar dataKey="tasks" fill={COLORS[1]} radius={4} />
                     </BarChart>
-                  </ResponsiveContainer>
+                  </ChartContainer>
                 </CardContent>
               </Card>
 
@@ -991,7 +1077,12 @@ const ProjectResourceAllocation = () => {
                   <CardTitle>Hours Worked by Role</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ChartContainer
+                    config={{
+                      hours: { label: 'Hours', color: COLORS[0] },
+                    }}
+                    className="h-[380px] w-full"
+                  >
                     <PieChart>
                       <Pie
                         data={visualizationData.hoursByRole}
@@ -999,17 +1090,22 @@ const ProjectResourceAllocation = () => {
                         nameKey="role"
                         cx="50%"
                         cy="50%"
-                        outerRadius={100}
-                        label
+                        outerRadius={120}
+                        label={({ name, value }) => `${name}: ${Number(value || 0).toFixed(2)}`}
                       >
                         {visualizationData.hoursByRole.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip />
-                      <Legend />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => `${name}: ${Number(value || 0).toFixed(2)}`}
+                          />
+                        }
+                      />
                     </PieChart>
-                  </ResponsiveContainer>
+                  </ChartContainer>
                 </CardContent>
               </Card>
 
@@ -1019,7 +1115,12 @@ const ProjectResourceAllocation = () => {
                   <CardTitle>Tasks Completed by Role</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <ResponsiveContainer width="100%" height={300}>
+                  <ChartContainer
+                    config={{
+                      tasks: { label: 'Tasks', color: COLORS[1] },
+                    }}
+                    className="h-[380px] w-full"
+                  >
                     <PieChart>
                       <Pie
                         data={visualizationData.tasksByRole}
@@ -1027,17 +1128,22 @@ const ProjectResourceAllocation = () => {
                         nameKey="role"
                         cx="50%"
                         cy="50%"
-                        outerRadius={100}
-                        label
+                        outerRadius={120}
+                        label={({ name, value }) => `${name}: ${Number(value || 0).toFixed(2)}`}
                       >
                         {visualizationData.tasksByRole.map((entry, index) => (
                           <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                         ))}
                       </Pie>
-                      <Tooltip />
-                      <Legend />
+                      <ChartTooltip
+                        content={
+                          <ChartTooltipContent
+                            formatter={(value, name) => `${name}: ${Number(value || 0).toFixed(2)}`}
+                          />
+                        }
+                      />
                     </PieChart>
-                  </ResponsiveContainer>
+                  </ChartContainer>
                 </CardContent>
               </Card>
             </div>
@@ -1051,6 +1157,7 @@ const ProjectResourceAllocation = () => {
             selectedDate={selectedDate}
             projectMetrics={projectMetrics}
             projectAllocations={projectAllocations}
+            allUsersData={allUsersData}
             userNameMapping={userNameMapping}
             loading={loading}
             formatTime={formatTime}
@@ -1273,6 +1380,7 @@ const DetailedProjectView = ({
   selectedDate,
   projectMetrics,
   projectAllocations,
+  allUsersData,
   userNameMapping,
   loading,
   formatTime,
@@ -1295,8 +1403,54 @@ const DetailedProjectView = ({
     if (!allocation?.resources) return null;
 
     let resources = aggregateByUser(allocation.resources);
-    
-    // Apply filters
+
+    // Build weekoff lookup (same normalization approach as overview logic)
+    const detailWeekday = format(selectedDate, 'EEEE').toUpperCase();
+    const userWeekoffsMap = new Map();
+    (allUsersData || []).forEach((u) => {
+      const userId = String(u?.id || '').trim();
+      if (!userId) return;
+      const normalizedWeekoffs = (u?.weekoffs || [])
+        .map(normalizeWeekoffValue)
+        .filter(Boolean);
+      if (!normalizedWeekoffs.length) return;
+      userWeekoffsMap.set(userId, normalizedWeekoffs);
+      userWeekoffsMap.set(userId.toLowerCase(), normalizedWeekoffs);
+      userWeekoffsMap.set(userId.toUpperCase(), normalizedWeekoffs);
+      userWeekoffsMap.set(userId.replace(/-/g, ''), normalizedWeekoffs);
+      userWeekoffsMap.set(userId.replace(/-/g, '').toLowerCase(), normalizedWeekoffs);
+    });
+
+    // Normalize status exactly like Streamlit detailed-view logic
+    const normalizedResources = resources.map((r) => {
+      const userId = String(r?.user_id || '').trim();
+      const attendanceStatus = String(r?.attendance_status || 'ABSENT').toUpperCase();
+      const userWeekoffs =
+        userWeekoffsMap.get(userId) ||
+        userWeekoffsMap.get(userId.toLowerCase()) ||
+        userWeekoffsMap.get(userId.toUpperCase()) ||
+        userWeekoffsMap.get(userId.replace(/-/g, '')) ||
+        userWeekoffsMap.get(userId.replace(/-/g, '').toLowerCase()) ||
+        [];
+      const isWeekoff = userWeekoffs.includes(detailWeekday);
+
+      let normalizedStatus = attendanceStatus;
+      if (attendanceStatus === 'WFH') normalizedStatus = 'ABSENT';
+      else if (attendanceStatus === 'ON_LEAVE' || attendanceStatus === 'HALF_DAY_LEAVE') normalizedStatus = 'LEAVE';
+      else if (!attendanceStatus) normalizedStatus = 'ABSENT';
+
+      const displayStatus = isWeekoff && normalizedStatus !== 'PRESENT' ? 'WEEKOFF' : normalizedStatus;
+      return {
+        ...r,
+        attendance_status_normalized: normalizedStatus,
+        attendance_status_display: displayStatus,
+        is_weekoff: isWeekoff,
+      };
+    });
+
+    resources = normalizedResources;
+
+    // Apply filters (status filter uses normalized status and excludes weekoff)
     if (designationFilter !== 'ALL') {
       resources = resources.filter(r => r.designation === designationFilter);
     }
@@ -1304,7 +1458,13 @@ const DetailedProjectView = ({
       resources = resources.filter(r => r.work_role === workRoleFilter);
     }
     if (statusFilter !== 'ALL') {
-      resources = resources.filter(r => r.attendance_status === statusFilter);
+      if (statusFilter === 'PRESENT') {
+        resources = resources.filter((r) => r.attendance_status_normalized === 'PRESENT' && !r.is_weekoff);
+      } else if (statusFilter === 'ABSENT') {
+        resources = resources.filter((r) => r.attendance_status_normalized === 'ABSENT' && !r.is_weekoff);
+      } else if (statusFilter === 'LEAVE') {
+        resources = resources.filter((r) => r.attendance_status_normalized === 'LEAVE' && !r.is_weekoff);
+      }
     }
 
     // Get metrics for tasks
@@ -1337,7 +1497,9 @@ const DetailedProjectView = ({
         email: r.email || '-',
         designation: r.designation || '-',
         work_role: r.work_role || '-',
-        status: r.attendance_status || '-',
+        status: r.attendance_status_display || r.attendance_status_normalized || r.attendance_status || '-',
+        status_normalized: r.attendance_status_normalized || 'ABSENT',
+        is_weekoff: Boolean(r.is_weekoff),
         tasks_done: tasksDoneStr,
         total_tasks: totalTasks,
         clock_in: formatTime(r.first_clock_in),
@@ -1346,17 +1508,76 @@ const DetailedProjectView = ({
         reporting_manager: r.reporting_manager || '-',
       };
     });
-  }, [selectedProject, designationFilter, statusFilter, workRoleFilter, projects, projectAllocations, projectMetrics, aggregateByUser, formatTime, calculateHoursWorked]);
+  }, [selectedProject, designationFilter, statusFilter, workRoleFilter, projects, projectAllocations, projectMetrics, aggregateByUser, formatTime, calculateHoursWorked, allUsersData, selectedDate]);
 
   const summary = useMemo(() => {
     if (!filteredData) return null;
+    const nonWeekoff = filteredData.filter((r) => !r.is_weekoff);
     return {
       allocated: filteredData.length,
-      present: filteredData.filter(r => r.status === 'PRESENT').length,
-      absent: filteredData.filter(r => r.status === 'ABSENT').length,
-      leave: filteredData.filter(r => r.status === 'LEAVE').length,
+      present: nonWeekoff.filter((r) => r.status_normalized === 'PRESENT').length,
+      absent: nonWeekoff.filter((r) => r.status_normalized === 'ABSENT').length,
+      leave: nonWeekoff.filter((r) => r.status_normalized === 'LEAVE').length,
     };
   }, [filteredData]);
+
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        selectedProject,
+        designationFilter,
+        statusFilter,
+        workRoleFilter,
+      }),
+    [selectedProject, designationFilter, statusFilter, workRoleFilter]
+  );
+
+  const dataSignature = useMemo(() => {
+    const rows = filteredData || [];
+    const totalTasks = rows.reduce((sum, row) => sum + Number(row.total_tasks || 0), 0);
+    return `${rows.length}|${totalTasks}`;
+  }, [filteredData]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: !loading,
+    message: 'Filters updated',
+  });
+
+  const summaryKpiItems = useMemo(() => {
+    if (!summary) return [];
+    return [
+      {
+        id: 'detailed-allocated',
+        title: 'Allocated',
+        value: String(summary.allocated),
+        icon: <Users className="h-4 w-4" />,
+        description: 'Total allocated users',
+      },
+      {
+        id: 'detailed-present',
+        title: 'Present',
+        value: String(summary.present),
+        icon: <CheckCircle2 className="h-4 w-4" />,
+        description: 'Users marked present',
+      },
+      {
+        id: 'detailed-absent',
+        title: 'Absent',
+        value: String(summary.absent),
+        icon: <UserX className="h-4 w-4" />,
+        description: 'Users marked absent',
+      },
+      {
+        id: 'detailed-leave',
+        title: 'Leave',
+        value: String(summary.leave),
+        icon: <AlertTriangle className="h-4 w-4" />,
+        description: 'Users on leave',
+      },
+    ];
+  }, [summary]);
 
   return (
     <div className="space-y-6">
@@ -1444,40 +1665,7 @@ const DetailedProjectView = ({
                 <Info className="h-5 w-5" />
                 Summary
               </h3>
-              <div className="grid grid-cols-4 gap-4">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Allocated</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold">{summary.allocated}</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Present</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-green-600">{summary.present}</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Absent</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-red-600">{summary.absent}</div>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm">Leave</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-bold text-yellow-600">{summary.leave}</div>
-                  </CardContent>
-                </Card>
-              </div>
+              <HoverEffect items={summaryKpiItems} className="grid-cols-1 sm:grid-cols-2 lg:grid-cols-4" />
             </div>
 
           {/* Daily Roster */}

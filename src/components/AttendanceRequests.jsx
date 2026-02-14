@@ -12,7 +12,11 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Drawer, DrawerClose, DrawerContent, DrawerDescription, DrawerFooter, DrawerHeader, DrawerTitle } from '@/components/ui/drawer';
 import { Combobox, ComboboxInput, ComboboxContent, ComboboxEmpty, ComboboxList, ComboboxItem } from '@/components/ui/combobox';
-import { ClipboardList, Info } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { LoaderThreeDemo } from './LoaderDemo';
+import { Calendar as CalendarIcon, CheckCircle2, ClipboardList, Clock3, Info, ListOrdered, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 
 const typeOptions = ['SICK_LEAVE', 'FULL-DAY', 'HALF-DAY', 'WFH', 'REGULARIZATION', 'SHIFT_CHANGE', 'OTHER'];
@@ -30,6 +34,7 @@ const AttendanceRequests = () => {
   const [endTimeValue, setEndTimeValue] = useState('18:00');
   const [cancelId, setCancelId] = useState('');
   const [cancelDrawerOpen, setCancelDrawerOpen] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const counts = useMemo(() => {
     const total = requests.length;
@@ -38,6 +43,37 @@ const AttendanceRequests = () => {
     const rejected = requests.filter((r) => r.status === 'REJECTED').length;
     return { total, pending, approved, rejected };
   }, [requests]);
+
+  const kpiItems = useMemo(() => ([
+    {
+      id: 'total-requests',
+      title: 'Total',
+      value: counts.total,
+      icon: <ListOrdered className="h-4 w-4" />,
+      description: 'All requests',
+    },
+    {
+      id: 'pending-requests',
+      title: 'Pending',
+      value: counts.pending,
+      icon: <Clock3 className="h-4 w-4" />,
+      description: 'Awaiting review',
+    },
+    {
+      id: 'approved-requests',
+      title: 'Approved',
+      value: counts.approved,
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      description: 'Accepted requests',
+    },
+    {
+      id: 'rejected-requests',
+      title: 'Rejected',
+      value: counts.rejected,
+      icon: <XCircle className="h-4 w-4" />,
+      description: 'Declined requests',
+    },
+  ]), [counts]);
 
   const fetchData = async () => {
     try {
@@ -56,7 +92,17 @@ const AttendanceRequests = () => {
   };
 
   useEffect(() => {
-    fetchData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await fetchData();
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const submitRequest = async () => {
@@ -146,6 +192,14 @@ const AttendanceRequests = () => {
     );
   }
 
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <LoaderThreeDemo />
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -156,12 +210,7 @@ const AttendanceRequests = () => {
         <p className="text-muted-foreground mt-1">Create and manage leave/WFH requests.</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Total</div><div className="text-2xl font-semibold">{counts.total}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Pending</div><div className="text-2xl font-semibold">{counts.pending}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Approved</div><div className="text-2xl font-semibold">{counts.approved}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Rejected</div><div className="text-2xl font-semibold">{counts.rejected}</div></CardContent></Card>
-      </div>
+      <HoverEffect items={kpiItems} className="grid-cols-2 md:grid-cols-4 lg:grid-cols-4" />
 
       <Card>
         <CardHeader>
@@ -179,11 +228,54 @@ const AttendanceRequests = () => {
             </div>
             <div className="space-y-2">
               <Label>Start Date</Label>
-              <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {format(new Date(`${startDate}T00:00:00`), 'PPP')}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(`${startDate}T00:00:00`)}
+                    onSelect={(date) => {
+                      if (!date) return;
+                      const formattedDate = format(date, 'yyyy-MM-dd');
+                      setStartDate(formattedDate);
+                      if (requestType === 'HALF-DAY') {
+                        setEndDate(formattedDate);
+                      }
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-2">
               <Label>End Date</Label>
-              <Input type="date" value={requestType === 'HALF-DAY' ? startDate : endDate} onChange={(e) => setEndDate(e.target.value)} disabled={requestType === 'HALF-DAY'} />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button
+                    variant="outline"
+                    className="w-full justify-start text-left font-normal"
+                    disabled={requestType === 'HALF-DAY'}
+                  >
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {format(new Date(`${(requestType === 'HALF-DAY' ? startDate : endDate)}T00:00:00`), 'PPP')}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(`${endDate}T00:00:00`)}
+                    onSelect={(date) => {
+                      if (date) setEndDate(format(date, 'yyyy-MM-dd'));
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
           </div>
 

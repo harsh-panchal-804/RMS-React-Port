@@ -1,9 +1,17 @@
 import uuid
-from sqlalchemy import Column, String, Integer, ForeignKey,Numeric, DateTime, Date, Text
+import enum
+from sqlalchemy import Column, String, Integer, ForeignKey,Numeric, DateTime, Date, Text, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
+
+class AttendanceStatus(str, enum.Enum):
+    UNKNOWN = "UNKNOWN"
+    PRESENT = "PRESENT"
+    ABSENT = "ABSENT"
+    LEAVE = "LEAVE"
+    WFH = "WFH"
 
 class AttendanceDaily(Base):
 
@@ -18,7 +26,11 @@ class AttendanceDaily(Base):
 
     shift_id = Column(UUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True)
 
-    status = Column(String, default = "UNKNOWN", nullable=False) #(e.g., PRESENT, ABSENT, LEAVE).
+    status = Column(
+        Enum(AttendanceStatus, name="attendance_status", create_type=False),
+        default=AttendanceStatus.UNKNOWN,
+        nullable=False
+    ) #(e.g., PRESENT, ABSENT, LEAVE).
     minutes_late = Column(Integer,default=0, nullable=False) #number of minutes late
 
     first_clock_in_at = Column(DateTime(timezone=True), nullable=True)

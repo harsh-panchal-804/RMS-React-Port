@@ -5,7 +5,6 @@ import {
   fetchProjectProductivityData,
   getAllUserMappings,
   getAllProjectMappings,
-  getUserRole,
   getToken,
 } from '../utils/api';
 import { Button } from '@/components/ui/button';
@@ -59,12 +58,13 @@ import {
   EyeOff
 } from 'lucide-react';
 import { Toaster } from '@/components/ui/sonner';
-import { LoaderThree } from '@/components/ui/loader';
+import { LoaderThreeDemo } from './LoaderDemo';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 
 const ProjectProductivityDashboard = () => {
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
   const [tokenSet, setTokenSet] = useState(false);
@@ -90,7 +90,9 @@ const ProjectProductivityDashboard = () => {
     if (existingToken) {
       setTokenSet(true);
       setTokenInput(existingToken);
+      return;
     }
+    setLoading(false);
   }, []);
 
   // Fetch data when token is set
@@ -136,7 +138,6 @@ const ProjectProductivityDashboard = () => {
     if (tokenInput.trim()) {
       const token = tokenInput.trim();
       localStorage.setItem('token', token);
-      localStorage.setItem('userRole', 'ADMIN');
       setTokenSet(true);
       console.log('✅ Token set successfully');
       console.log('💡 Token format check:', {
@@ -234,6 +235,34 @@ const ProjectProductivityDashboard = () => {
 
     return filtered;
   }, [data, viewMode, selectedProject, filtersApplied, filterRoles, filterProjects, startDate, endDate]);
+
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        viewMode,
+        selectedProject: selectedProject || '',
+        filtersApplied,
+        filterRoles: [...filterRoles].sort(),
+        filterProjects: [...filterProjects].sort(),
+        startDate: startDate?.toISOString?.() || '',
+        endDate: endDate?.toISOString?.() || '',
+      }),
+    [viewMode, selectedProject, filtersApplied, filterRoles, filterProjects, startDate, endDate]
+  );
+
+  const dataSignature = useMemo(() => {
+    if (!processedData.length) return '0|0|0';
+    const totalHours = processedData.reduce((sum, row) => sum + Number(row.hours_worked || 0), 0);
+    const totalTasks = processedData.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
+    return `${processedData.length}|${totalHours.toFixed(2)}|${totalTasks.toFixed(2)}`;
+  }, [processedData]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: tokenSet && !loading,
+    message: 'Filters updated',
+  });
 
   const uniqueProjects = useMemo(() => {
     return [...new Set(data.map((row) => row.project))].sort();
@@ -642,23 +671,7 @@ const ProjectProductivityDashboard = () => {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen w-full bg-background p-6 flex items-center justify-center">
-        <Card className="max-w-md w-full">
-          <CardContent className="pt-6 space-y-4">
-            <div className="flex items-center justify-center min-h-[200px]">
-              <LoaderThree />
-            </div>
-            <div className="space-y-2 text-center">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4 mx-auto" />
-            </div>
-            <Progress value={33} className="w-full" />
-            <p className="text-center text-muted-foreground">Loading data from API...</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <LoaderThreeDemo />;
   }
 
   if (error) {

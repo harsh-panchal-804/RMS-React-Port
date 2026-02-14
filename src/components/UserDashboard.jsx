@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { format, startOfMonth } from 'date-fns';
-import { CartesianGrid, Line, LineChart, XAxis, YAxis, Bar, BarChart, Area, AreaChart, Scatter, ScatterChart, ZAxis, Cell, Legend, ResponsiveContainer, ComposedChart, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts';
+import { CartesianGrid, Line, LineChart, XAxis, YAxis, Bar, BarChart, Area, AreaChart, Scatter, ScatterChart, ZAxis, Cell, ComposedChart, RadarChart, Radar, PolarGrid, PolarAngleAxis } from 'recharts';
 import {
   fetchUserProductivityData,
   getAllUserMappings,
@@ -50,14 +50,15 @@ import {
   Calendar as CalendarIcon,
   Search,
 } from 'lucide-react';
-import { LoaderThree } from '@/components/ui/loader';
+import { LoaderThreeDemo } from './LoaderDemo';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
 import { useAuth } from '@/contexts/AuthContext';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 
 const UserProductivityDashboard = () => {
   const { user } = useAuth();
   const [data, setData] = useState([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [tokenInput, setTokenInput] = useState('');
   const [tokenSet, setTokenSet] = useState(false);
@@ -91,7 +92,9 @@ const UserProductivityDashboard = () => {
     if (existingToken) {
       setTokenSet(true);
       setTokenInput(existingToken);
+      return;
     }
+    setLoading(false);
   }, []);
 
   if (!user || user.role !== 'ADMIN') {
@@ -171,7 +174,6 @@ const UserProductivityDashboard = () => {
     if (tokenInput.trim()) {
       const token = tokenInput.trim();
       localStorage.setItem('token', token);
-      localStorage.setItem('userRole', 'ADMIN');
       setTokenSet(true);
       console.log('✅ Token set successfully');
       if (token.startsWith('Bearer ')) {
@@ -311,6 +313,36 @@ const UserProductivityDashboard = () => {
 
     return filtered;
   }, [data, viewMode, selectedUser, soulIdSearch, filtersApplied, filterRoles, filterProjects, filterQuality, startDate, endDate, userMap, soulIdMap]);
+
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        viewMode,
+        selectedUser: selectedUser || '',
+        soulIdSearch: soulIdSearch?.trim?.() || '',
+        filtersApplied,
+        filterRoles: [...filterRoles].sort(),
+        filterProjects: [...filterProjects].sort(),
+        filterQuality: [...filterQuality].sort(),
+        startDate: startDate?.toISOString?.() || '',
+        endDate: endDate?.toISOString?.() || '',
+      }),
+    [viewMode, selectedUser, soulIdSearch, filtersApplied, filterRoles, filterProjects, filterQuality, startDate, endDate]
+  );
+
+  const dataSignature = useMemo(() => {
+    if (!processedData.length) return '0|0|0';
+    const totalHours = processedData.reduce((sum, row) => sum + Number(row.hours_worked || 0), 0);
+    const totalTasks = processedData.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
+    return `${processedData.length}|${totalHours.toFixed(2)}|${totalTasks.toFixed(2)}`;
+  }, [processedData]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: tokenSet && !loading,
+    message: 'Filters updated',
+  });
 
   const uniqueProjects = useMemo(() => {
     return [...new Set(data.map((row) => row.project))].sort();
@@ -740,155 +772,302 @@ const UserProductivityDashboard = () => {
     );
   };
 
+  // Shared chart color palette (aligned with project productivity dashboard)
+  const getChartColor = (index) => {
+    const colors = [
+      'oklch(0.488 0.243 264.376)',
+      'oklch(0.696 0.17 162.48)',
+      'oklch(0.769 0.188 70.08)',
+      'oklch(0.627 0.265 303.9)',
+      'oklch(0.645 0.246 16.439)',
+    ];
+    return colors[(index - 1) % 5];
+  };
+
   // Chart components
   const HoursChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <AreaChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Area type="monotone" dataKey="hours" stroke="#1f77b4" fill="#1f77b4" fillOpacity={0.6} />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          hours: { label: 'Hours Worked', color: getChartColor(1) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <AreaChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Area type="monotone" dataKey="hours" stroke={getChartColor(1)} fill={getChartColor(1)} fillOpacity={0.6} />
         </AreaChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const TasksChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Line type="monotone" dataKey="tasks" stroke="#ff7f0e" strokeWidth={2} dot={{ r: 4 }} />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          tasks: { label: 'Tasks Completed', color: getChartColor(2) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <LineChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line type="monotone" dataKey="tasks" stroke={getChartColor(2)} strokeWidth={2} dot={false} />
         </LineChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const ProductivityChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <ComposedChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Line type="monotone" dataKey="productivity" stroke="#87ceeb" strokeWidth={1} dot={{ r: 3 }} opacity={0.5} name="Daily Score" />
-          <Line type="monotone" dataKey="movingAvg" stroke="#2ca02c" strokeWidth={3} name="7-Day Moving Avg" />
-          <Legend />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          productivity: { label: 'Daily Score', color: getChartColor(1) },
+          movingAvg: { label: '7-Day Moving Avg', color: getChartColor(2) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <ComposedChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line type="monotone" dataKey="productivity" stroke={getChartColor(1)} strokeWidth={1} dot={false} opacity={0.5} name="Daily Score" />
+          <Line type="monotone" dataKey="movingAvg" stroke={getChartColor(2)} strokeWidth={3} dot={false} name="7-Day Moving Avg" />
         </ComposedChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const QualityDistributionChart = ({ data }) => {
-    const colors = { Good: '#2ca02c', Average: '#ff7f0e', Bad: '#d62728', 'Not Assessed': '#888888' };
+    const colors = { Good: getChartColor(2), Average: getChartColor(3), Bad: getChartColor(5), 'Not Assessed': 'hsl(var(--muted-foreground))' };
     return (
-      <ResponsiveContainer width="100%" height={400}>
-        <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="rating" />
-          <YAxis />
-          <Bar dataKey="count" fill="#8884d8">
+      <ChartContainer
+        config={{
+          rating: { label: 'Rating' },
+          count: { label: 'Count', color: getChartColor(1) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <BarChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis dataKey="rating" tickLine={false} axisLine={false} tickMargin={8} />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} />
+          <ChartTooltip content={<ChartTooltipContent />} />
+          <Bar dataKey="count" radius={4}>
             {data.map((entry, index) => (
-              <Cell key={`cell-${index}`} fill={colors[entry.rating] || '#888888'} />
+              <Cell key={`cell-${index}`} fill={colors[entry.rating] || getChartColor(1)} />
             ))}
           </Bar>
         </BarChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     );
   };
 
   const AttendanceChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <BarChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Bar dataKey="Present" stackId="a" fill="#2ca02c" />
-          <Bar dataKey="WFH" stackId="a" fill="#1f77b4" />
-          <Bar dataKey="Leave" stackId="a" fill="#ff7f0e" />
-          <Bar dataKey="Absent" stackId="a" fill="#d62728" />
-          <Legend />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          Present: { label: 'Present', color: getChartColor(2) },
+          WFH: { label: 'WFH', color: getChartColor(1) },
+          Leave: { label: 'Leave', color: getChartColor(3) },
+          Absent: { label: 'Absent', color: getChartColor(5) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <BarChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Bar dataKey="Present" stackId="a" fill={getChartColor(2)} />
+          <Bar dataKey="WFH" stackId="a" fill={getChartColor(1)} />
+          <Bar dataKey="Leave" stackId="a" fill={getChartColor(3)} />
+          <Bar dataKey="Absent" stackId="a" fill={getChartColor(5)} />
         </BarChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const QualityScoreChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <ComposedChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Line type="monotone" dataKey="score" stroke="#9467bd" strokeWidth={2} dot={{ r: 4 }} opacity={0.7} name="Daily Quality Score" />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          score: { label: 'Daily Quality Score', color: getChartColor(4) },
+          movingAvg: { label: '7-Day Moving Avg', color: getChartColor(2) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <ComposedChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line type="monotone" dataKey="score" stroke={getChartColor(4)} strokeWidth={2} dot={false} opacity={0.7} name="Daily Quality Score" />
           {data.length > 1 && (
-            <Line type="monotone" dataKey="movingAvg" stroke="#2ca02c" strokeWidth={3} name="7-Day Moving Avg" />
+            <Line type="monotone" dataKey="movingAvg" stroke={getChartColor(2)} strokeWidth={3} dot={false} name="7-Day Moving Avg" />
           )}
-          <Legend />
         </ComposedChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const AccuracyChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Line type="monotone" dataKey="accuracy" stroke="#17becf" strokeWidth={2} dot={{ r: 4 }} />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          accuracy: { label: 'Accuracy', color: getChartColor(1) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <LineChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line type="monotone" dataKey="accuracy" stroke={getChartColor(1)} strokeWidth={2} dot={false} />
         </LineChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const CriticalRateChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <LineChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis allowDataOverflow={false} />
-          <Line type="monotone" dataKey="criticalRate" stroke="#e377c2" strokeWidth={2} dot={{ r: 4 }} />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          criticalRate: { label: 'Critical Rate', color: getChartColor(5) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <LineChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line type="monotone" dataKey="criticalRate" stroke={getChartColor(5)} strokeWidth={2} dot={false} />
         </LineChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
   const AccuracyCriticalScatter = ({ data }) => (
-    <ResponsiveContainer width="100%" height={400}>
-      <ScatterChart>
-        <CartesianGrid strokeDasharray="3 3" />
+    <ChartContainer
+      config={{
+        accuracy: { label: 'Accuracy', color: getChartColor(1) },
+        criticalRate: { label: 'Critical Rate', color: getChartColor(2) },
+      }}
+      className="h-[400px] w-full"
+    >
+      <ScatterChart margin={{ left: 12, right: 12 }}>
+        <CartesianGrid vertical={false} />
         <XAxis type="number" dataKey="accuracy" allowDataOverflow={false} name="Accuracy" />
         <YAxis type="number" dataKey="criticalRate" allowDataOverflow={false} name="Critical Rate" />
         <ZAxis type="number" dataKey="tasks" range={[50, 400]} name="Tasks" />
-        <Scatter data={data} fill="#8884d8">
+        <ChartTooltip content={<ChartTooltipContent />} />
+        <Scatter data={data} fill={getChartColor(1)}>
           {data.map((entry, index) => (
-            <Cell key={`cell-${index}`} fill={entry.qualityRating === 'Good' ? '#2ca02c' : entry.qualityRating === 'Average' ? '#ff7f0e' : '#d62728'} />
+            <Cell key={`cell-${index}`} fill={entry.qualityRating === 'Good' ? getChartColor(2) : entry.qualityRating === 'Average' ? getChartColor(3) : getChartColor(5)} />
           ))}
         </Scatter>
-        <Legend />
       </ScatterChart>
-    </ResponsiveContainer>
+    </ChartContainer>
   );
 
   const UserQualityTrendChart = ({ data }) => {
-    const colors = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'];
+    const colors = [getChartColor(1), getChartColor(2), getChartColor(3), getChartColor(4), getChartColor(5)];
     const users = [...new Set(data.map((d) => d.user))];
     const dates = [...new Set(data.map((d) => d.date))];
     
     return (
       <ScrollableChart dataLength={dates.length}>
-        <ResponsiveContainer width="100%" height={500}>
-          <LineChart>
-            <CartesianGrid strokeDasharray="3 3" />
-            <XAxis dataKey="date" />
-            <YAxis allowDataOverflow={false} />
+        <ChartContainer
+          config={users.reduce((acc, user, idx) => {
+            acc[user] = { label: user, color: colors[idx % colors.length] };
+            return acc;
+          }, { date: { label: 'Date' } })}
+          className="h-[500px] w-full"
+        >
+          <LineChart margin={{ left: 12, right: 12 }}>
+            <CartesianGrid vertical={false} />
+            <XAxis
+              dataKey="date"
+              tickLine={false}
+              axisLine={false}
+              tickMargin={8}
+              tickFormatter={(value) =>
+                new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+              }
+            />
+            <YAxis tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+            <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
             {users.map((user, idx) => {
               const userData = data.filter((d) => d.user === user);
               return (
@@ -900,30 +1079,44 @@ const UserProductivityDashboard = () => {
                   name={user}
                   stroke={colors[idx % colors.length]}
                   strokeWidth={2}
-                  dot={{ r: 3 }}
+                  dot={false}
                 />
               );
             })}
-            <Legend />
           </LineChart>
-        </ResponsiveContainer>
+        </ChartContainer>
       </ScrollableChart>
     );
   };
 
   const CumulativeChart = ({ data }) => (
     <ScrollableChart dataLength={data?.length || 0}>
-      <ResponsiveContainer width="100%" height={400}>
-        <ComposedChart data={data}>
-          <CartesianGrid strokeDasharray="3 3" />
-          <XAxis dataKey="date" />
-          <YAxis yAxisId="left" allowDataOverflow={false} />
-          <YAxis yAxisId="right" orientation="right" allowDataOverflow={false} />
-          <Line yAxisId="left" type="monotone" dataKey="cumulativeTasks" stroke="#1f77b4" strokeWidth={2} name="Cumulative Tasks" />
-          <Line yAxisId="right" type="monotone" dataKey="cumulativeHours" stroke="#ff7f0e" strokeWidth={2} name="Cumulative Hours" />
-          <Legend />
+      <ChartContainer
+        config={{
+          date: { label: 'Date' },
+          cumulativeTasks: { label: 'Cumulative Tasks', color: getChartColor(1) },
+          cumulativeHours: { label: 'Cumulative Hours', color: getChartColor(2) },
+        }}
+        className="h-[400px] w-full"
+      >
+        <ComposedChart data={data} margin={{ left: 12, right: 12 }}>
+          <CartesianGrid vertical={false} />
+          <XAxis
+            dataKey="date"
+            tickLine={false}
+            axisLine={false}
+            tickMargin={8}
+            tickFormatter={(value) =>
+              new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+            }
+          />
+          <YAxis yAxisId="left" tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <YAxis yAxisId="right" orientation="right" tickLine={false} axisLine={false} tickMargin={8} allowDataOverflow={false} />
+          <ChartTooltip content={<ChartTooltipContent labelFormatter={(value) => new Date(value).toLocaleDateString()} />} />
+          <Line yAxisId="left" type="monotone" dataKey="cumulativeTasks" stroke={getChartColor(1)} strokeWidth={2} dot={false} name="Cumulative Tasks" />
+          <Line yAxisId="right" type="monotone" dataKey="cumulativeHours" stroke={getChartColor(2)} strokeWidth={2} dot={false} name="Cumulative Hours" />
         </ComposedChart>
-      </ResponsiveContainer>
+      </ChartContainer>
     </ScrollableChart>
   );
 
@@ -1003,23 +1196,7 @@ const UserProductivityDashboard = () => {
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen w-full bg-background p-6 flex items-center justify-center">
-        <Card className="max-w-md w-full">
-          <CardContent className="pt-6 space-y-4">
-            <div className="flex items-center justify-center min-h-[200px]">
-              <LoaderThree />
-            </div>
-            <div className="space-y-2 text-center">
-              <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4 mx-auto" />
-            </div>
-            <Progress value={33} className="w-full" />
-            <p className="text-center text-muted-foreground">Loading data from API...</p>
-          </CardContent>
-        </Card>
-      </div>
-    );
+    return <LoaderThreeDemo />;
   }
 
   if (error) {
@@ -1156,8 +1333,8 @@ const UserProductivityDashboard = () => {
               )}
 
               {viewMode === 'All Users' && (
-                <div className="flex items-center gap-4">
-                  <Label htmlFor="soul-id-search">
+                <div className="flex items-center gap-3 flex-nowrap md:col-span-2">
+                  <Label htmlFor="soul-id-search" className="whitespace-nowrap shrink-0">
                     <Search className="h-4 w-4 inline mr-2" />
                     Search by Soul ID:
                   </Label>
@@ -1166,7 +1343,7 @@ const UserProductivityDashboard = () => {
                     placeholder="Enter Soul ID..."
                     value={soulIdSearch}
                     onChange={(e) => setSoulIdSearch(e.target.value)}
-                    className="w-[200px]"
+                    className="w-full md:max-w-[260px]"
                   />
                 </div>
               )}

@@ -37,6 +37,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { HoverEffect } from '@/components/ui/card-hover-effect';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -72,6 +73,7 @@ import {
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { toast } from 'sonner';
+import { LoaderThreeDemo } from './LoaderDemo';
 
 const ROLE_OPTIONS = ['ANNOTATION', 'QC', 'LIVE_QC', 'RETRO_QC', 'PM', 'APM', 'RPM'];
 const USER_ROLE_OPTIONS = ['USER', 'MANAGER', 'ADMIN'];
@@ -80,6 +82,7 @@ const WEEKOFF_OPTIONS = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY',
 const ProjectManagementCenter = () => {
   const { user, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   
   // Data states
@@ -226,7 +229,20 @@ const ProjectManagementCenter = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await Promise.all([
+        fetchAllData(),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   // Fetch project members when project is selected
@@ -755,19 +771,6 @@ const ProjectManagementCenter = () => {
     return ratingMap[rating] || { label: rating, icon: '', color: '' };
   };
 
-  if (!user || !['ADMIN', 'MANAGER'].includes(user.role)) {
-    return (
-      <div className="p-6">
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            Access denied. Admin or Manager role required.
-          </AlertDescription>
-        </Alert>
-      </div>
-    );
-  }
-
   // Filter projects
   const filteredProjects = useMemo(() => {
     return projects.filter(p => {
@@ -794,6 +797,37 @@ const ProjectManagementCenter = () => {
     const completed = projects.filter(p => !!p.end_date).length;
     return { total, active, paused, completed };
   }, [projects]);
+
+  const projectKpiItems = useMemo(() => ([
+    {
+      id: 'pmc-total-projects',
+      title: 'Total Projects',
+      value: String(projectKPIs.total),
+      icon: <FolderOpen className="h-4 w-4" />,
+      description: 'All managed projects',
+    },
+    {
+      id: 'pmc-active-projects',
+      title: 'Active Projects',
+      value: String(projectKPIs.active),
+      icon: <CheckCircle2 className="h-4 w-4" />,
+      description: 'Active and ongoing',
+    },
+    {
+      id: 'pmc-paused-projects',
+      title: 'Paused Projects',
+      value: String(projectKPIs.paused),
+      icon: <AlertCircle className="h-4 w-4" />,
+      description: 'Temporarily inactive',
+    },
+    {
+      id: 'pmc-completed-projects',
+      title: 'Completed Projects',
+      value: String(projectKPIs.completed),
+      icon: <FileText className="h-4 w-4" />,
+      description: 'Closed projects',
+    },
+  ]), [projectKPIs]);
 
   // Get available users for adding members (exclude already assigned)
   const availableUsers = useMemo(() => {
@@ -1154,6 +1188,23 @@ const ProjectManagementCenter = () => {
     }
   };
 
+  if (!user || !['ADMIN', 'MANAGER'].includes(user.role)) {
+    return (
+      <div className="p-6">
+        <Alert>
+          <AlertCircle className="h-4 w-4" />
+          <AlertDescription>
+            Access denied. Admin or Manager role required.
+          </AlertDescription>
+        </Alert>
+      </div>
+    );
+  }
+
+  if (initialLoading) {
+    return <LoaderThreeDemo />;
+  }
+
   return (
     <div className="p-6 space-y-6">
       {/* Header */}
@@ -1369,40 +1420,7 @@ const ProjectManagementCenter = () => {
           </Card>
 
           {/* KPIs */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Total Projects</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{projectKPIs.total}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Active Projects</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{projectKPIs.active}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Paused Projects</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{projectKPIs.paused}</div>
-              </CardContent>
-            </Card>
-            <Card>
-              <CardHeader className="pb-2">
-                <CardDescription>Completed Projects</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl font-bold">{projectKPIs.completed}</div>
-              </CardContent>
-            </Card>
-          </div>
+          <HoverEffect items={projectKpiItems} className="grid-cols-1 md:grid-cols-4 lg:grid-cols-4" />
 
           {/* Search and Filter */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

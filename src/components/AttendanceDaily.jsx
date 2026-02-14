@@ -5,12 +5,14 @@ import { authenticatedRequest } from '@/utils/api';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Combobox, ComboboxInput, ComboboxContent, ComboboxEmpty, ComboboxList, ComboboxItem } from '@/components/ui/combobox';
-import { CalendarDays, Info, Search } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { CalendarDays, Calendar as CalendarIcon, Info, Search } from 'lucide-react';
 import { toast } from 'sonner';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 
 const AttendanceDaily = () => {
   const { user } = useAuth();
@@ -24,6 +26,28 @@ const AttendanceDaily = () => {
     if (statusFilter === 'ALL') return completed;
     return completed.filter((s) => String(s.status || '').toUpperCase() === statusFilter);
   }, [sessions, statusFilter]);
+
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        selectedDate,
+        statusFilter,
+      }),
+    [selectedDate, statusFilter]
+  );
+
+  const dataSignature = useMemo(() => {
+    const totalHours = filtered.reduce((sum, row) => sum + Number(row.minutes_worked || 0), 0);
+    const totalTasks = filtered.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
+    return `${filtered.length}|${totalHours.toFixed(2)}|${totalTasks.toFixed(2)}`;
+  }, [filtered]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: !loading,
+    message: 'Filters updated',
+  });
 
   const fetchSessions = async () => {
     try {
@@ -68,7 +92,24 @@ const AttendanceDaily = () => {
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Select Date</Label>
-            <Input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-start text-left font-normal">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {format(new Date(`${selectedDate}T00:00:00`), 'PPP')}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={new Date(`${selectedDate}T00:00:00`)}
+                  onSelect={(date) => {
+                    if (date) setSelectedDate(format(date, 'yyyy-MM-dd'));
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="space-y-2">
             <Label>Attendance Status</Label>

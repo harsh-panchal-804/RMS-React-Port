@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { useAuth } from '@/contexts/AuthContext';
 import { authenticatedRequest } from '@/utils/api';
@@ -6,12 +6,16 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Combobox, ComboboxInput, ComboboxContent, ComboboxEmpty, ComboboxList, ComboboxItem } from '@/components/ui/combobox';
 import { Badge } from '@/components/ui/badge';
-import { History, Download, Search, Info } from 'lucide-react';
+import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { LoaderThreeDemo } from './LoaderDemo';
+import { Calendar as CalendarIcon, History, Download, Search, Info, Clock3, Target } from 'lucide-react';
 import { toast } from 'sonner';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 
 const allowedRoles = ['USER', 'ADMIN', 'MANAGER'];
 
@@ -23,6 +27,7 @@ const UserHistory = () => {
   const [dateTo, setDateTo] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [projectFilter, setProjectFilter] = useState('All Projects');
   const [roleFilter, setRoleFilter] = useState('All Roles');
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const projectOptions = useMemo(() => {
     const projects = [...new Set(rows.map((row) => row.project_name).filter(Boolean))].sort();
@@ -42,6 +47,30 @@ const UserHistory = () => {
     });
   }, [rows, projectFilter, roleFilter]);
 
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        dateFrom,
+        dateTo,
+        projectFilter,
+        roleFilter,
+      }),
+    [dateFrom, dateTo, projectFilter, roleFilter]
+  );
+
+  const dataSignature = useMemo(() => {
+    const totalHoursSig = filteredRows.reduce((sum, row) => sum + Number(row.minutes_worked || 0), 0);
+    const totalTasksSig = filteredRows.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
+    return `${filteredRows.length}|${totalHoursSig.toFixed(2)}|${totalTasksSig.toFixed(2)}`;
+  }, [filteredRows]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: !loading && !initialLoading,
+    message: 'Filters updated',
+  });
+
   const totalHours = useMemo(
     () => filteredRows.reduce((sum, row) => sum + (Number(row.minutes_worked || 0) / 60), 0),
     [filteredRows]
@@ -51,16 +80,33 @@ const UserHistory = () => {
     [filteredRows]
   );
 
-  const handleFetch = async () => {
-    if (dateFrom && dateTo && dateFrom > dateTo) {
+  const kpiItems = useMemo(() => ([
+    {
+      id: 'history-total-hours',
+      title: 'Total Hours',
+      value: `${totalHours.toFixed(1)}h`,
+      icon: <Clock3 className="h-4 w-4" />,
+      description: 'Hours in filtered range',
+    },
+    {
+      id: 'history-total-tasks',
+      title: 'Tasks Completed',
+      value: String(totalTasks),
+      icon: <Target className="h-4 w-4" />,
+      description: 'Tasks in filtered range',
+    },
+  ]), [totalHours, totalTasks]);
+
+  const fetchHistory = async (startDate = dateFrom, endDate = dateTo) => {
+    if (startDate && endDate && startDate > endDate) {
       toast.warning('Invalid date range', { description: 'Date From cannot be after Date To.' });
       return;
     }
     try {
       setLoading(true);
       const params = {};
-      if (dateFrom) params.start_date = dateFrom;
-      if (dateTo) params.end_date = dateTo;
+      if (startDate) params.start_date = startDate;
+      if (endDate) params.end_date = endDate;
       const data = await authenticatedRequest('GET', '/time/history', params);
       setRows(Array.isArray(data) ? data : []);
       setProjectFilter('All Projects');
@@ -70,6 +116,10 @@ const UserHistory = () => {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleFetch = async () => {
+    await fetchHistory();
   };
 
   const handleDownload = () => {
@@ -106,6 +156,26 @@ const UserHistory = () => {
     URL.revokeObjectURL(url);
   };
 
+  useEffect(() => {
+    let isMounted = true;
+    const loadInitialData = async () => {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      setDateFrom(today);
+      setDateTo(today);
+      await Promise.all([
+        fetchHistory(today, today),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   if (!user || !allowedRoles.includes(user.role)) {
     return (
       <div className="p-6">
@@ -115,6 +185,10 @@ const UserHistory = () => {
         </Alert>
       </div>
     );
+  }
+
+  if (initialLoading) {
+    return <LoaderThreeDemo />;
   }
 
   return (
@@ -136,11 +210,45 @@ const UserHistory = () => {
           <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <div className="space-y-2">
               <Label>Date From</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {format(new Date(`${dateFrom}T00:00:00`), 'PPP')}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(`${dateFrom}T00:00:00`)}
+                    onSelect={(date) => {
+                      if (date) setDateFrom(format(date, 'yyyy-MM-dd'));
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-2">
               <Label>Date To</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              <Popover>
+                <PopoverTrigger asChild>
+                  <Button variant="outline" className="w-full justify-start text-left font-normal">
+                    <CalendarIcon className="mr-2 h-4 w-4" />
+                    {format(new Date(`${dateTo}T00:00:00`), 'PPP')}
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent className="w-auto p-0" align="start">
+                  <Calendar
+                    mode="single"
+                    selected={new Date(`${dateTo}T00:00:00`)}
+                    onSelect={(date) => {
+                      if (date) setDateTo(format(date, 'yyyy-MM-dd'));
+                    }}
+                    initialFocus
+                  />
+                </PopoverContent>
+              </Popover>
             </div>
             <div className="space-y-2">
               <Label>Project</Label>
@@ -176,20 +284,7 @@ const UserHistory = () => {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground">Total Hours</div>
-            <div className="text-2xl font-semibold">{totalHours.toFixed(1)}h</div>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="pt-6">
-            <div className="text-sm text-muted-foreground">Tasks Completed</div>
-            <div className="text-2xl font-semibold">{totalTasks}</div>
-          </CardContent>
-        </Card>
-      </div>
+      <HoverEffect items={kpiItems} className="grid-cols-1 md:grid-cols-2 lg:grid-cols-2" />
 
       <Card>
         <CardHeader>

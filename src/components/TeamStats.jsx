@@ -6,11 +6,15 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/com
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Combobox, ComboboxInput, ComboboxContent, ComboboxEmpty, ComboboxList, ComboboxItem } from '@/components/ui/combobox';
-import { Users, Info } from 'lucide-react';
+import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { Calendar } from '@/components/ui/calendar';
+import { LoaderThreeDemo } from './LoaderDemo';
+import { Calendar as CalendarIcon, Clock3, Info, Target, UserCheck, UserX, Users } from 'lucide-react';
 import { toast } from 'sonner';
+import { useFiltersUpdatedToast } from '@/hooks/useFiltersUpdatedToast';
 
 const TeamStats = () => {
   const { user } = useAuth();
@@ -20,6 +24,7 @@ const TeamStats = () => {
   const [projects, setProjects] = useState([]);
   const [teamUsers, setTeamUsers] = useState([]);
   const [metricsRows, setMetricsRows] = useState([]);
+  const [initialLoading, setInitialLoading] = useState(true);
 
   const userProjects = useMemo(
     () => projects.filter((p) => p.current_user_role && p.current_user_role !== 'N/A'),
@@ -37,6 +42,28 @@ const TeamStats = () => {
     return match ? [match.id] : [];
   }, [selectedProject, userProjects]);
 
+  const filtersSignature = useMemo(
+    () =>
+      JSON.stringify({
+        selectedDate,
+        selectedProject,
+      }),
+    [selectedDate, selectedProject]
+  );
+
+  const dataSignature = useMemo(() => {
+    const totalHours = metricsRows.reduce((sum, row) => sum + Number(row.hours_worked || 0), 0);
+    const totalTasks = metricsRows.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
+    return `${teamUsers.length}|${metricsRows.length}|${totalHours.toFixed(2)}|${totalTasks.toFixed(2)}`;
+  }, [teamUsers, metricsRows]);
+
+  useFiltersUpdatedToast({
+    filtersSignature,
+    dataSignature,
+    enabled: !loading && !initialLoading,
+    message: 'Filters updated',
+  });
+
   const counts = useMemo(() => {
     const total = teamUsers.length;
     const present = teamUsers.filter((u) => u.today_status === 'PRESENT').length;
@@ -49,6 +76,44 @@ const TeamStats = () => {
     const totalTasks = metricsRows.reduce((sum, row) => sum + Number(row.tasks_completed || 0), 0);
     return { totalHours, totalTasks };
   }, [metricsRows]);
+
+  const kpiItems = useMemo(() => ([
+    {
+      id: 'team-total-users',
+      title: 'Total Users',
+      value: counts.total,
+      icon: <Users className="h-4 w-4" />,
+      description: 'Users in current team scope',
+    },
+    {
+      id: 'team-present',
+      title: 'Present',
+      value: counts.present,
+      icon: <UserCheck className="h-4 w-4" />,
+      description: 'Users marked present today',
+    },
+    {
+      id: 'team-absent',
+      title: 'Absent',
+      value: counts.absent,
+      icon: <UserX className="h-4 w-4" />,
+      description: 'Users marked absent today',
+    },
+    {
+      id: 'team-total-hours',
+      title: 'Total Hours',
+      value: totals.totalHours.toFixed(1),
+      icon: <Clock3 className="h-4 w-4" />,
+      description: 'Hours logged for selected day',
+    },
+    {
+      id: 'team-total-tasks',
+      title: 'Total Tasks',
+      value: totals.totalTasks,
+      icon: <Target className="h-4 w-4" />,
+      description: 'Tasks completed for selected day',
+    },
+  ]), [counts, totals]);
 
   const fetchProjects = async () => {
     try {
@@ -63,7 +128,20 @@ const TeamStats = () => {
   };
 
   useEffect(() => {
-    fetchProjects();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await Promise.all([
+        fetchProjects(),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   const loadStats = async () => {
@@ -111,6 +189,10 @@ const TeamStats = () => {
     );
   }
 
+  if (initialLoading) {
+    return <LoaderThreeDemo />;
+  }
+
   return (
     <div className="p-6 space-y-6">
       <div>
@@ -129,7 +211,24 @@ const TeamStats = () => {
         <CardContent className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div className="space-y-2">
             <Label>Date</Label>
-            <Input type="date" value={selectedDate} onChange={(e) => setSelectedDate(e.target.value)} />
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="outline" className="w-full justify-start text-left font-normal">
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {format(new Date(`${selectedDate}T00:00:00`), 'PPP')}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="start">
+                <Calendar
+                  mode="single"
+                  selected={new Date(`${selectedDate}T00:00:00`)}
+                  onSelect={(date) => {
+                    if (date) setSelectedDate(format(date, 'yyyy-MM-dd'));
+                  }}
+                  initialFocus
+                />
+              </PopoverContent>
+            </Popover>
           </div>
           <div className="space-y-2">
             <Label>Project</Label>
@@ -149,13 +248,7 @@ const TeamStats = () => {
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Total Users</div><div className="text-2xl font-semibold">{counts.total}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Present</div><div className="text-2xl font-semibold">{counts.present}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Absent</div><div className="text-2xl font-semibold">{counts.absent}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Total Hours</div><div className="text-2xl font-semibold">{totals.totalHours.toFixed(1)}</div></CardContent></Card>
-        <Card><CardContent className="pt-6"><div className="text-sm text-muted-foreground">Total Tasks</div><div className="text-2xl font-semibold">{totals.totalTasks}</div></CardContent></Card>
-      </div>
+      <HoverEffect items={kpiItems} className="grid-cols-2 md:grid-cols-5 lg:grid-cols-5" />
 
       <Card>
         <CardHeader><CardTitle>Team Members</CardTitle></CardHeader>

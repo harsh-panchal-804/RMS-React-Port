@@ -1,6 +1,6 @@
 "use client";
 import React, { useState } from "react";
-import { Routes, Route, NavLink, useLocation } from "react-router-dom";
+import { Routes, Route, NavLink, Navigate, useLocation } from "react-router-dom";
 import { SidebarProvider, Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarInset, useSidebar } from "@/components/ui/sidebar";
 import {
   IconBrandTabler,
@@ -8,9 +8,10 @@ import {
   IconAlertTriangle,
   IconUsersGroup,
 } from "@tabler/icons-react";
-import { Settings, LogOut, Loader2 } from "lucide-react";
+import { Settings, LogOut } from "lucide-react";
 import { motion } from "framer-motion";
 import { cn } from "@/lib/utils";
+import { LoaderThreeDemo } from "./LoaderDemo";
 import ProjectProductivityDashboard from "./Dashboard";
 import UserProductivityDashboard from "./UserDashboard";
 import ProjectResourceAllocation from "./ProjectResourceAllocation";
@@ -77,12 +78,7 @@ export function Layout() {
 
   // Show loading state
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center flex-col gap-4">
-        <Loader2 className="h-8 w-8 animate-spin" />
-        <p className="text-sm text-muted-foreground">Loading...</p>
-      </div>
-    );
+    return <LoaderThreeDemo />;
   }
 
   // Show login if not authenticated
@@ -93,7 +89,16 @@ export function Layout() {
 
   console.log('✅ Authenticated, showing layout');
 
-  const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(user?.role);
+  const currentRole = (user?.role || '').toUpperCase();
+  const isAdminOrManager = ['ADMIN', 'MANAGER'].includes(currentRole);
+  const userAccessibleRoles = ['USER', 'ADMIN', 'MANAGER'];
+
+  const guardRoute = (element, allowedRoles) => {
+    if (!allowedRoles.includes(currentRole)) {
+      return <Navigate to="/" replace />;
+    }
+    return element;
+  };
 
   const adminLinks = [
     {
@@ -297,17 +302,17 @@ export function Layout() {
           <div className="flex-1 overflow-auto">
             <Routes>
               <Route path="/" element={isAdminOrManager ? <Home /> : <UserHome />} />
-              <Route path="/dashboard" element={<ProjectProductivityDashboard />} />
-              <Route path="/user-dashboard" element={<UserProductivityDashboard />} />
-              <Route path="/project-resource-allocation" element={<ProjectResourceAllocation />} />
-              <Route path="/time-sheet-approvals" element={<TimeSheetApprovals />} />
-              <Route path="/attendance-approvals" element={<AttendanceRequestApprovals />} />
-              <Route path="/project-management" element={<ProjectManagementCenter />} />
-              <Route path="/reports" element={<ReportsCenter />} />
-              <Route path="/team-stats" element={<TeamStats />} />
-              <Route path="/history" element={<UserHistory />} />
-              <Route path="/attendance-daily" element={<AttendanceDaily />} />
-              <Route path="/attendance-requests" element={<AttendanceRequests />} />
+              <Route path="/dashboard" element={guardRoute(<ProjectProductivityDashboard />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/user-dashboard" element={guardRoute(<UserProductivityDashboard />, ['ADMIN'])} />
+              <Route path="/project-resource-allocation" element={guardRoute(<ProjectResourceAllocation />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/time-sheet-approvals" element={guardRoute(<TimeSheetApprovals />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/attendance-approvals" element={guardRoute(<AttendanceRequestApprovals />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/project-management" element={guardRoute(<ProjectManagementCenter />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/reports" element={guardRoute(<ReportsCenter />, ['ADMIN', 'MANAGER'])} />
+              <Route path="/team-stats" element={guardRoute(<TeamStats />, userAccessibleRoles)} />
+              <Route path="/history" element={guardRoute(<UserHistory />, userAccessibleRoles)} />
+              <Route path="/attendance-daily" element={guardRoute(<AttendanceDaily />, userAccessibleRoles)} />
+              <Route path="/attendance-requests" element={guardRoute(<AttendanceRequests />, userAccessibleRoles)} />
               <Route path="/404" element={<NotFound />} />
               <Route path="*" element={<NotFound />} />
             </Routes>

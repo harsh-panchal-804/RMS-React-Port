@@ -1,9 +1,15 @@
 import uuid
-from sqlalchemy import Column, String, Integer, ForeignKey,Numeric, DateTime, Date, Text
+import enum
+from sqlalchemy import Column, String, Integer, ForeignKey,Numeric, DateTime, Date, Text, Enum
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.db.base import Base
+
+class ApprovalStatus(str, enum.Enum):
+    PENDING = "PENDING"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
 
 class TimeHistory(Base):
     __tablename__ = "history"
@@ -16,7 +22,11 @@ class TimeHistory(Base):
     
     # --- Enums (Stored as Strings in Python) ---
     work_role = Column(String, nullable=False)  # e.g., "ANNOTATION"
-    status = Column(String, default="PENDING", nullable=False) # e.g., "PENDING"
+    status = Column(
+        Enum(ApprovalStatus, name="approval_status", create_type=False),
+        default=ApprovalStatus.PENDING,
+        nullable=False
+    ) # e.g., "PENDING"
 
     # --- Time Tracking ---
     sheet_date = Column(Date, nullable=False, default=func.current_date())

@@ -44,6 +44,7 @@ import {
   DrawerTitle,
 } from '@/components/ui/drawer';
 import { HoverEffect } from '@/components/ui/card-hover-effect';
+import { LoaderThreeDemo } from './LoaderDemo';
 import {
   ClipboardList,
   CheckCircle2,
@@ -110,6 +111,7 @@ const toLocalDateKey = (dateValue) => format(dateValue, 'yyyy-MM-dd');
 const AttendanceRequestApprovals = () => {
   const { user, token } = useAuth();
   const [loading, setLoading] = useState(false);
+  const [initialLoading, setInitialLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   
   // Data states
@@ -182,7 +184,17 @@ const AttendanceRequestApprovals = () => {
   };
 
   useEffect(() => {
-    fetchAllData();
+    let isMounted = true;
+    const loadInitialData = async () => {
+      await fetchAllData();
+      if (isMounted) {
+        setInitialLoading(false);
+      }
+    };
+    loadInitialData();
+    return () => {
+      isMounted = false;
+    };
   }, [token]);
 
   const handleRefresh = async () => {
@@ -474,6 +486,14 @@ const AttendanceRequestApprovals = () => {
     );
   }
 
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <LoaderThreeDemo />
+      </div>
+    );
+  }
+
   // KPI items for metrics
   const metricsItems = [
     {
@@ -744,7 +764,7 @@ const AttendanceRequestApprovals = () => {
                                   Reject
                                 </Button>
                               </DialogTrigger>
-                              <DialogContent>
+                              <DialogContent overlayClassName="backdrop-blur-sm">
                                 <DialogHeader>
                                   <DialogTitle>Reject Request</DialogTitle>
                                   <DialogDescription>

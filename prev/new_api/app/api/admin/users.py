@@ -9,7 +9,7 @@ from app.db.async_compat import run_with_sync_session
 from app.models.shift import Shift
 from app.models.user import User, UserRole
 from app.models.project_members import ProjectMember
-from app.models.attendance_daily import AttendanceDaily
+from app.models.attendance_daily import AttendanceDaily, AttendanceStatus
 from app.core.dependencies import get_current_user
 from app.schemas.user import UserBatchUpdateRequest, UserCreate, UserResponse, UserUpdate, UserQualityUpdate, UserSystemUpdate, UsersAdminSearchFilters, UserBatchUpdate
 from typing import List, Optional
@@ -112,7 +112,7 @@ async def kpi_cards_info(
     on_leave_result = await db.execute(
         select(func.count(func.distinct(AttendanceDaily.user_id)))
         .filter(AttendanceDaily.attendance_date == todays_date)
-        .filter(AttendanceDaily.status == "LEAVE")
+        .filter(AttendanceDaily.status == AttendanceStatus.LEAVE)
     )
     on_leave = on_leave_result.scalar()
       
@@ -143,6 +143,30 @@ async def list_rep_managers(
     }
     for r in reporting_managers
     ]
+
+@router.get("/project_managers")
+async def list_project_managers(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user)
+):
+    """
+    Get all active users with role ADMIN or MANAGER.
+    Used for project owner assignment dropdown.
+    """
+    result = await db.execute(
+        select(User.id, User.name, User.email, User.role)
+        .filter(User.role.in_([UserRole.ADMIN, UserRole.MANAGER]))
+        .filter(User.is_active == True)
+        .order_by(User.name)
+    )
+    managers = result.all()
+
+    return [{
+        "id": str(m.id),
+        "name": m.name,
+        "email": m.email,
+        "role": m.role.value if hasattr(m.role, "value") else str(m.role),
+    } for m in managers]
 
 @router.post("/users_with_filter")
 @run_with_sync_session()
