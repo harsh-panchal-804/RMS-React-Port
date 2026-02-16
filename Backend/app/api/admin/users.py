@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, Query, HTTPException, status
-from sqlalchemy import func, select, cast, String
+from sqlalchemy import func, select, case, and_, or_, literal, cast, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased, Session
 # TODO: Convert remaining endpoints to async - for now using AsyncSession everywhere
@@ -10,7 +10,10 @@ from app.models.shift import Shift
 from app.models.user import User, UserRole
 from app.models.project_members import ProjectMember
 from app.models.attendance_daily import AttendanceDaily, AttendanceStatus
+from app.models.attendance_request import AttendanceRequest
+from app.models.history import TimeHistory
 from app.core.dependencies import get_current_user
+from app.utils.timezone import today_ist
 from app.schemas.user import UserBatchUpdateRequest, UserCreate, UserResponse, UserUpdate, UserQualityUpdate, UserSystemUpdate, UsersAdminSearchFilters, UserBatchUpdate
 from typing import List, Optional
 from uuid import UUID
@@ -25,6 +28,7 @@ router = APIRouter(
     tags=["Admin Users"],
 )
 logger = logging.getLogger(__name__)
+NOT_ALLOCATED_PROJECT_ID = UUID("cf261b87-41a6-4091-86c2-c4884f74a25c")
 
 @router.get("/", response_model=List[UserResponse])
 async def list_users(
@@ -183,15 +187,15 @@ def search_with_filters(
     is_active = payload.is_active
     status = payload.status
 
-    # Parse date string to date object, default to today if not provided
+    # Parse date string to date object, default to IST today if not provided
     if date_str:
         try:
             from datetime import datetime as dt
             today = dt.fromisoformat(date_str).date() if isinstance(date_str, str) else date_str
         except (ValueError, AttributeError):
-            today = date.today()
+            today = today_ist()
     else:
-        today = date.today()
+        today = today_ist()
     Manager = aliased(User)
 
     project_count_sq = (
@@ -216,6 +220,34 @@ def search_with_filters(
         .group_by(AttendanceDaily.user_id)
         .subquery()
     )
+
+    # Query approved leave requests for today.
+    leave_sq = (
+        db.query(
+            AttendanceRequest.user_id.label("user_id"),
+            func.max(AttendanceRequest.request_type).label("leave_type"),
+        )
+        .filter(
+            cast(AttendanceRequest.status, String) == "APPROVED",
+            AttendanceRequest.start_date <= today,
+            AttendanceRequest.end_date >= today,
+            cast(AttendanceRequest.request_type, String).in_(["SICK_LEAVE", "FULL-DAY", "HALF-DAY", "OTHER"]),
+        )
+        .group_by(AttendanceRequest.user_id)
+        .subquery()
+    )
+
+    # Mark user as not allocated only when they currently have an active
+    # session on the dedicated "Not allocated" project.
+    active_not_allocated_sq = (
+        db.query(TimeHistory.user_id.label("user_id"))
+        .filter(
+            TimeHistory.project_id == NOT_ALLOCATED_PROJECT_ID,
+            TimeHistory.clock_out_at.is_(None),
+        )
+        .distinct()
+        .subquery()
+    )
     
     # Debug: Log the date being used for the query
     import logging
@@ -227,6 +259,22 @@ def search_with_filters(
         AttendanceDaily.attendance_date == today
     ).count()
     logger.info(f"[ATTENDANCE QUERY] Found {attendance_count} attendance records for date {today}")
+
+    # Compute today_status: prioritize approved leave, then attendance record.
+    today_status_expr = case(
+        (
+            and_(
+                leave_sq.c.leave_type.isnot(None),
+                or_(
+                    attendance_sq.c.status.is_(None),
+                    cast(attendance_sq.c.status, String) != "PRESENT",
+                ),
+            ),
+            literal("LEAVE"),
+        ),
+        (attendance_sq.c.status.isnot(None), cast(attendance_sq.c.status, String)),
+        else_=literal("UNKNOWN"),
+    )
 
     query = (
         db.query(
@@ -247,13 +295,17 @@ def search_with_filters(
             func.coalesce(project_count_sq.c.project_count, 0).label(
                 "allocated_projects"
             ),
-            func.coalesce(cast(attendance_sq.c.status, String), "UNKNOWN").label(
-                "today_status"
-            ),
+            case(
+                (active_not_allocated_sq.c.user_id.isnot(None), True),
+                else_=False,
+            ).label("is_not_allocated"),
+            today_status_expr.label("today_status"),
         )
         .outerjoin(Manager, Manager.id == User.rpm_user_id)
         .outerjoin(project_count_sq, project_count_sq.c.user_id == User.id)
         .outerjoin(attendance_sq, attendance_sq.c.user_id == User.id)
+        .outerjoin(leave_sq, leave_sq.c.user_id == User.id)
+        .outerjoin(active_not_allocated_sq, active_not_allocated_sq.c.user_id == User.id)
         .outerjoin(Shift, Shift.id == User.default_shift_id)
     ) 
 
@@ -281,9 +333,7 @@ def search_with_filters(
             )
 
     if status is not None:
-        query = query.filter(
-            func.coalesce(cast(attendance_sq.c.status, String), "UNKNOWN") == status
-        )
+        query = query.filter(today_status_expr == status)
 
 
     total = query.count()
@@ -306,6 +356,7 @@ def search_with_filters(
             "shift_name": r.shift_name,
             "rpm_user_id": r.reporting_manager_id,
             "allocated_projects": r.allocated_projects,
+            "is_not_allocated": r.is_not_allocated,
             "today_status": r.today_status,
         }
         for r in results

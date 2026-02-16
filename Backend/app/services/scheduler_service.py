@@ -5,7 +5,7 @@ Runs productivity, quality, and attendance calculations every 6 hours
 import logging
 import asyncio
 from datetime import date, timedelta, datetime
-from typing import List
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
@@ -45,6 +45,13 @@ def log_and_print(message, level='info'):
 
 # Global scheduler instance
 scheduler = BackgroundScheduler()
+_app_event_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def set_scheduler_event_loop(loop: asyncio.AbstractEventLoop):
+    """Bind scheduler async work to the app's primary event loop."""
+    global _app_event_loop
+    _app_event_loop = loop
 
 
 def calculate_daily_productivity_for_project(project_id: UUID, calculation_date: date, db: Session):
@@ -392,7 +399,16 @@ def calculate_all_projects_automatically():
             await async_db.run_sync(_calculate_all_projects_automatically_sync)
 
     try:
-        asyncio.run(_run())
+        # APScheduler jobs run in worker threads. Running asyncio.run() there
+        # creates a separate event loop and can reuse asyncpg pooled
+        # connections bound to a different loop. Route all DB async work to
+        # the FastAPI app loop to avoid cross-loop asyncpg failures.
+        if _app_event_loop and _app_event_loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(_run(), _app_event_loop)
+            future.result()
+        else:
+            # Fallback for CLI/manual execution.
+            asyncio.run(_run())
     except Exception as e:
         logger.error(f"Critical error in automatic calculation: {str(e)}", exc_info=True)
 

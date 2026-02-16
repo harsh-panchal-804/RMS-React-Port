@@ -9,6 +9,7 @@ from app.api import analytics
 from app.api import reports
 import time
 import logging
+import asyncio
 
 load_dotenv()
 
@@ -136,13 +137,18 @@ from app.api.admin import role_drilldown
 app.include_router(admin_router)
 app.include_router(role_drilldown.router)
 
-from app.services.scheduler_service import start_scheduler, stop_scheduler
+from app.services.scheduler_service import (
+    start_scheduler,
+    stop_scheduler,
+    set_scheduler_event_loop,
+)
 
 @app.on_event("startup")
 async def startup_event():
     """Application startup"""
     logger.info("🚀 Application starting up...")
     try:
+        set_scheduler_event_loop(asyncio.get_running_loop())
         start_scheduler()
         logger.info("▶️ Scheduler is ENABLED")
     except Exception as e:

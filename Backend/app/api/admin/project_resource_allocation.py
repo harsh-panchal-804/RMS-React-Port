@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session, aliased
+from sqlalchemy import cast, String
 
 from app.core.dependencies import get_current_user, get_db
 from app.models.project_members import ProjectMember
@@ -12,6 +13,7 @@ from app.models.user import User
 from app.models.attendance_daily import AttendanceDaily
 from app.models.shift import Shift
 from app.models.history import TimeHistory
+from app.models.attendance_request import AttendanceRequest
 
 router = APIRouter(
     prefix="/admin/project-resource-allocation",
@@ -82,9 +84,47 @@ def project_resource_allocation(
 
     rows = query.all()
 
+    # Get all user IDs from the result to check for approved leaves.
+    user_ids = [row[1].id for row in rows]  # row[1] is User
+
+    # Query approved leave requests for these users on the target date.
+    approved_leaves = {}
+    if user_ids:
+        leave_requests = (
+            db.query(AttendanceRequest)
+            .filter(
+                AttendanceRequest.user_id.in_(user_ids),
+                cast(AttendanceRequest.status, String) == "APPROVED",
+                AttendanceRequest.start_date <= target_date,
+                AttendanceRequest.end_date >= target_date,
+                cast(AttendanceRequest.request_type, String).in_(["SICK_LEAVE", "FULL-DAY", "HALF-DAY", "OTHER"]),
+            )
+            .all()
+        )
+        for leave in leave_requests:
+            approved_leaves[leave.user_id] = leave.request_type
+
     result = []
 
     for pm, user, manager, attendance, shift in rows:
+        # PRIORITY:
+        # 1) Approved leave -> ON_LEAVE/HALF_DAY_LEAVE (unless user is PRESENT)
+        # 2) Attendance record status
+        # 3) ABSENT
+        if user.id in approved_leaves:
+            if attendance and attendance.status == "PRESENT":
+                attendance_status = "PRESENT"
+            else:
+                leave_type = approved_leaves[user.id]
+                if leave_type == "HALF-DAY":
+                    attendance_status = "HALF_DAY_LEAVE"
+                else:
+                    attendance_status = "ON_LEAVE"
+        elif attendance:
+            attendance_status = attendance.status
+        else:
+            attendance_status = "ABSENT"
+
         result.append(
             {
                 "user_id": user.id,
@@ -100,7 +140,7 @@ def project_resource_allocation(
                 "reporting_manager": manager.name if manager else None,
                 "shift": shift.name if shift else None,
 
-                "attendance_status": attendance.status if attendance else "ABSENT",
+                "attendance_status": attendance_status,
                 "first_clock_in": attendance.first_clock_in_at if attendance else None,
                 "last_clock_out": attendance.last_clock_out_at if attendance else None,
                 "minutes_worked": attendance.minutes_worked if attendance else 0,
